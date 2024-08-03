@@ -1,0 +1,332 @@
+{
+  "workbench.editor.showTabs": "single",
+  "editor.fontFamily": "'FiraCode-Retina'",
+  "editor.fontLigatures": "'calt', 'ss01', 'ss02', 'ss03', 'ss04', 'ss05', 'ss06', 'zero', 'onum'",
+  "editor.fontWeight": "450",
+  "editor.insertSpaces": true,
+  "editor.tabSize": 2,
+  "prettier.tabWidth": 2,
+  "editor.tabCompletion": "on",
+  "emmet.showAbbreviationSuggestions": false,
+  "emmet.excludeLanguages": [
+    "markdown",
+    "typescriptreact",
+    "javascriptreact"
+  ],
+  "emmet.includeLanguages": {
+    "": ""
+  },
+  "editor.minimap.enabled": false,
+  "sync.gist": "b15ba75d9c0f4e60f1e5b8a995636827",
+  "typescript.preferences.jsxAttributeCompletionStyle": "auto",
+  "editor.suggestSelection": "first",
+  "eslint.validate": [
+    "javascript",
+    "javascriptreact",
+    "typescript",
+    "typescriptreact"
+  ],
+  "typescript.updateImportsOnFileMove.enabled": "always",
+  "javascript.updateImportsOnFileMove.enabled": "always",
+  "[html]": {
+    "editor.defaultFormatter": "vscode.html-language-features"
+  },
+  "auto-close-tag.fullMode": true,
+  "html.autoClosingTags": true,
+  "files.associations": {
+    "*.blade.php": "html",
+    "*.erb": "erb",
+    "*.scss": "scss"
+  },
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit",
+    "source.fixAll": "explicit",
+    "source.fixAll.tslint": "explicit"
+  },
+  "[javascript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[typescriptreact]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[json]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[typescript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "editor.formatOnSave": true,
+  "files.insertFinalNewline": true,
+  "[erb]": {
+    "editor.formatOnSave": false,
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true,
+    "editor.autoIndent": "advanced",
+  },
+  "[scss]": {
+    "editor.defaultFormatter": "mrmlnc.vscode-csscomb",
+    "editor.formatOnSave": true,
+    "editor.suggest.insertMode": "replace",
+    "gitlens.codeLens.scopes": [
+      "document"
+    ]
+  },
+  "csscomb.formatOnSave": true,
+  "debug.console.fontSize": 14,
+  "workbench.iconTheme": "catppuccin-frappe",
+  "diffEditor.ignoreTrimWhitespace": false,
+  "githubIssues.queries": [
+    {
+      "label": "My Issues",
+      "query": "default"
+    },
+    {
+      "label": "Created Issues",
+      "query": "author:${user} state:open repo:${owner}/${repository} sort:created-desc"
+    },
+    {
+      "label": "Recent Issues",
+      "query": "state:open repo:${owner}/${repository} sort:updated-desc"
+    }
+  ],
+  "tailwindCSS.experimental.classRegex": [
+    [
+      "cva\\(([^)]*)\\)",
+      "[\"'`]([^\"'`]*).*?[\"'`]"
+    ],
+    [
+      "cx\\(([^)]*)\\)",
+      "(?:'|\"|`)([^']*)(?:'|\"|`)"
+    ],
+    [
+      "cn\\(([^)]*)\\)",
+      "(?:'|\"|`)([^']*)(?:'|\"|`)"
+    ]
+  ],
+  "workbench.colorTheme": "Catppuccin Frappé",
+  "[jsonc]": {
+    "editor.defaultFormatter": "vscode.json-language-features"
+  },
+  "githubPullRequests.pushBranch": "always",
+  "vscode-neovim.compositeKeys": {
+    "jk": {
+      "command": "vscode-neovim.lua",
+      "args": [
+        [
+          "local code = require('vscode')",
+          "code.action('vscode-neovim.escape')",
+          "code.action('workbench.action.files.save')",
+        ],
+      ],
+    },
+  },
+  "vim.enableNeovim": true,
+  "vim.foldfix": true,
+  "vim.handleKeys": {
+    "<C-d>": true,
+    "<C-s>": false,
+    "<C-z>": false
+  },
+  "vim.insertModeKeyBindingsNonRecursive": [
+    {
+      "before": [
+        "j",
+        "k"
+      ],
+      "after": [
+        "<ESC>"
+      ],
+    },
+  ],
+  "vim.normalModeKeyBindingsNonRecursive": [
+    {
+      "before": [
+        "u"
+      ],
+      "after": [],
+      "commands": [
+        {
+          "command": "undo",
+          "args": []
+        }
+      ]
+    },
+    {
+      "before": [
+        "<C-r>"
+      ],
+      "after": [],
+      "commands": [
+        {
+          "command": "redo",
+          "args": []
+        }
+      ]
+    },
+    {
+      "before": [
+        "<leader>",
+        "g",
+        "d"
+      ],
+      "after": [],
+      "commands": [
+        {
+          "command": "editor.action.revealDefinition"
+        }
+      ]
+    },
+    {
+      "before": [
+        "<leader>",
+        "o"
+      ],
+      "after": [],
+      "commands": [
+        {
+          "command": "workbench.action.navigateBack"
+        }
+      ]
+    },
+    {
+      "before": [
+        "<leader>",
+        "i"
+      ],
+      "after": [],
+      "commands": [
+        {
+          "command": "workbench.action.navigateForward"
+        }
+      ]
+    },
+    {
+      "before": [
+        "<leader>",
+        "d",
+        "m"
+      ],
+      "after": [],
+      "commands": [
+        {
+          "command": "editor.action.showHover"
+        }
+      ]
+    },
+    {
+      "before": [
+        "<leader>",
+        "d",
+        "p"
+      ],
+      "after": [],
+      "commands": [
+        {
+          "command": "editor.action.peekDefinition"
+        }
+      ]
+    },
+    {
+      "before": [
+        "<leader>",
+        "g",
+        "r"
+      ],
+      "after": [],
+      "commands": [
+        {
+          "command": "editor.action.goToReferences"
+        }
+      ],
+    },
+    {
+      "before": [
+        "<leader>",
+        ".",
+      ],
+      "after": [],
+      "commands": [
+        {
+          "command": "editor.action.quickFix"
+        }
+      ]
+    },
+    {
+      "before": [
+        "<leader>",
+        "d",
+        "l"
+      ],
+      "commands": [
+        {
+          "command": "workbench.actions.view.problems"
+        }
+      ]
+    },
+    {
+      "before": [
+        "<leader>",
+        "d",
+        "r"
+      ],
+      "commands": [
+        {
+          "command": "editor.action.rename"
+        }
+      ]
+    },
+    {
+      "before": [
+        "<leader>",
+        "e",
+        "n"
+      ],
+      "commands": [
+        {
+          "command": "editor.action.marker.nextInFiles"
+        }
+      ]
+    },
+    {
+      "before": [
+        "<leader>",
+        "g",
+        "t"
+      ],
+      "commands": [
+        {
+          "command": "editor.action.goToTypeDefinition"
+        }
+      ]
+    },
+  ],
+  "vim.useSystemClipboard": false,
+  "vim.vimrc.enable": true,
+  "vim.smartRelativeLine": true,
+  "vim.sneak": true,
+  "vim.sneakUseIgnorecaseAndSmartcase": true,
+  "vim.targets.enable": true,
+  "vim.visualModeKeyBindings": [],
+  "vim.leader": "<tab>",
+  "editor.lineNumbers": "relative",
+  "extensions.experimental.affinity": {
+    "asvetliakov.vscode-neovim": 1
+  },
+  "githubPullRequests.pullBranch": "never",
+  "vscode-neovim.neovimInitVimPaths.darwin": "~/.config/nvim/init.lua",
+  "vscode-neovim.neovimInitVimPaths.linux": "~/.config/nvim/init.lua",
+  "vscode-neovim.neovimInitVimPaths.win32": "~/.config/nvim/init.lua",
+  "editor.accessibilitySupport": "off",
+  "indentRainbow.indicatorStyle": "light",
+  "indentRainbow.lightIndicatorStyleLineWidth": 2,
+  "find-it-faster.advanced.disableStartupChecks": true,
+  "find-it-faster.general.showMaximizedTerminal": true,
+  "git.showActionButton": {
+    "commit": false,
+    "publish": true,
+    "sync": true
+  },
+  "gitlens.advanced.messages": {
+    "suppressIntegrationDisconnectedTooManyFailedRequestsWarning": true
+  },
+}
