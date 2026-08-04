@@ -1,0 +1,240 @@
+# herdr — configured to feel like the tmux setup it replaces.
+#
+# Model mapping from the old tmux workflow:
+#   tmux session  -> herdr workspace   (one per project, ctrl+1..9 to switch)
+#   tmux window   -> herdr tab         (prefix+1..9 within a project)
+#   tmux pane     -> herdr pane
+# Everything lives in ONE herdr session so the sidebar shows every project at once.
+#
+# Full reference: https://herdr.dev/docs/config-reference/
+# Reload after editing: prefix+r  (ctrl+a r)
+
+onboarding = false
+
+# -----------------------------------------------------------------------------
+# Theme — Catppuccin Macchiato, matching ~/.config/ghostty/config
+# -----------------------------------------------------------------------------
+
+[theme]
+# herdr only ships "catppuccin" (Mocha) and "catppuccin-latte" — there is no
+# built-in Macchiato flavour, so every token is overridden below. Without this
+# the sidebar renders Mocha while Ghostty/nvim/pi/opencode render Macchiato.
+name = "catppuccin"
+
+[theme.custom]
+accent = "#c6a0f6"      # mauve
+panel_bg = "#24273a"    # base
+surface0 = "#363a4f"
+surface1 = "#494d64"
+surface_dim = "#1e2030" # mantle
+overlay0 = "#6e738d"
+overlay1 = "#8087a2"
+text = "#cad3f5"
+subtext0 = "#a5adcb"
+mauve = "#c6a0f6"
+green = "#a6da95"
+yellow = "#eed49f"
+red = "#ed8796"
+blue = "#8aadf4"
+teal = "#8bd5ca"
+peach = "#f5a97f"
+
+# -----------------------------------------------------------------------------
+# Terminal
+# -----------------------------------------------------------------------------
+
+[terminal]
+# default_shell unset -> $SHELL (/bin/zsh). new_cwd unset -> "follow", which is
+# the tmux `-c` behaviour: new panes/tabs inherit the source pane's directory.
+
+# -----------------------------------------------------------------------------
+# Worktrees
+# -----------------------------------------------------------------------------
+
+[worktrees]
+# Layout is <repo>/<branch-slug>. Kept OUT of ~/Projects on purpose: the
+# sessionizer project picker scans ~/Projects, so worktrees living here means
+# the picker lists one entry per project instead of one per branch. Worktrees
+# reach you through their indented sidebar rows and prefix+shift+o instead.
+directory = "~/.herdr/worktrees"
+
+# -----------------------------------------------------------------------------
+# Keybindings
+# -----------------------------------------------------------------------------
+
+[keys]
+# Same prefix as tmux. ctrl+a ctrl+a sends a literal ctrl+a, so readline's
+# beginning-of-line still works (herdr's built-in send-prefix equivalent).
+prefix = "ctrl+a"
+
+# --- projects (was: tmux sessions) ---
+# Direct chord, no prefix — ctrl+1..9 jumps straight to a project. This relies
+# on the Kitty keyboard protocol, which Ghostty implements; ctrl+digit is
+# unrepresentable in legacy terminal encoding, so it will NOT work over ssh
+# from a legacy terminal. Fall back to prefix+w there.
+switch_workspace = "ctrl+1..9"
+workspace_picker = "prefix+w"     # fuzzy-navigate OPEN projects
+new_workspace = "prefix+shift+n"
+rename_workspace = "prefix+shift+w"
+close_workspace = "prefix+shift+d"
+
+# --- worktrees ---
+# new_worktree ships bound; open_worktree and remove_worktree ship UNBOUND,
+# which is what made worktree management feel missing.
+new_worktree = "prefix+shift+g"
+remove_worktree = "prefix+shift+u"
+# Native open_worktree is REPLACED by the heherdr overlay on prefix+o below —
+# its modal is filter-first, so bare j/k types into the filter instead of
+# moving. Set it back to "prefix+shift+o" to get herdr's own overlay again.
+open_worktree = ""
+
+# --- tabs (was: tmux windows) ---
+switch_tab = "prefix+1..9"
+new_tab = "prefix+c"
+rename_tab = "prefix+comma"       # tmux: prefix+, rename-window
+previous_tab = "prefix+p"
+next_tab = "prefix+n"
+close_tab = "prefix+shift+x"
+
+# --- panes ---
+# Matches `bind-key h select-pane -L` etc. from tmux.conf.
+focus_pane_left = "prefix+h"
+focus_pane_down = "prefix+j"
+focus_pane_up = "prefix+k"
+focus_pane_right = "prefix+l"
+last_pane = "prefix+semicolon"    # tmux: prefix+; last pane
+# tmux's % and " are the primary bindings; herdr's own defaults kept as aliases.
+# Naming matches tmux's semantics: "vertical" = vertical divider = side by side.
+#   prefix+%  -> panes side by side (tmux: split-window -h)
+#   prefix+"  -> panes stacked      (tmux: split-window -v)
+split_vertical = ["prefix+%", "prefix+v"]
+split_horizontal = ['prefix+"', "prefix+minus"]
+# ctrl+q kills the pane with no confirmation, same as `bind -n C-q kill-pane`.
+close_pane = ["prefix+x", "ctrl+q"]
+zoom = "prefix+z"
+copy_mode = "prefix+["            # tmux: prefix+[
+
+# --- session / misc ---
+detach = ["prefix+d", "prefix+q"] # tmux: prefix+d detach
+reload_config = "prefix+r"        # tmux: prefix+r source-file
+resize_mode = "prefix+shift+r"    # then h/j/k/l to resize, esc to exit
+toggle_sidebar = "prefix+b"
+edit_scrollback = "prefix+e"
+goto = "prefix+g"
+# Moved off its prefix+o default, which now opens the heherdr worktree overlay.
+open_notification_target = "prefix+shift+o"
+
+# --- sessionizer plugin (replaces tmux-sessionizer / tmux-windowizer) ---
+
+[[keys.command]]
+key = "prefix+f"
+type = "plugin_action"
+command = "sessionizer.open"
+description = "open project workspace (fuzzy)"
+
+[[keys.command]]
+key = "prefix+shift+f"
+type = "plugin_action"
+command = "sessionizer.worktree-open"
+description = "open git worktree workspace (fuzzy)"
+
+# --- heherdr (~/.dotfiles/heherdr, linked local plugin — `dot plugins` relinks) ---
+# Replaces herdr's native open_worktree overlay: same key ergonomics, but a
+# real modal UI (bare j/k moves, / filters, d removes with a safety gate).
+# ctrl+a f and ctrl+a F above are untouched.
+[[keys.command]]
+key = "prefix+o"
+type = "plugin_action"
+command = "heherdr.worktree"
+description = "project worktrees (modal)"
+
+# --- vim-aware ctrl+h/j/k/l (replaces vim-tmux-navigator) ---
+# Forwards the chord into nvim when the focused pane runs vim/nvim, otherwise
+# moves herdr's pane focus. Editor side lives in
+# ~/.config/nvim/after/plugin/herdr-navigation.lua
+
+[[keys.command]]
+key = "ctrl+h"
+type = "plugin_action"
+command = "vim-herdr-navigation.left"
+description = "navigate left (vim/herdr)"
+
+[[keys.command]]
+key = "ctrl+j"
+type = "plugin_action"
+command = "vim-herdr-navigation.down"
+description = "navigate down (vim/herdr)"
+
+[[keys.command]]
+key = "ctrl+k"
+type = "plugin_action"
+command = "vim-herdr-navigation.up"
+description = "navigate up (vim/herdr)"
+
+[[keys.command]]
+key = "ctrl+l"
+type = "plugin_action"
+command = "vim-herdr-navigation.right"
+description = "navigate right (vim/herdr)"
+
+# lazygit in a modal popup — tmux had no equivalent and a popup is cheap.
+[[keys.command]]
+key = "prefix+alt+g"
+type = "popup"
+command = "lazygit"
+width = "90%"
+height = "90%"
+
+# -----------------------------------------------------------------------------
+# UI
+# -----------------------------------------------------------------------------
+
+[ui]
+sidebar_width = 32
+accent = "#c6a0f6"
+show_agent_labels_on_pane_borders = false
+prompt_new_workspace_name = true
+
+# The agents list cannot be filtered to the active project — no config option
+# exists, and plugin v1 explicitly cannot render sidebar UI. "priority" at
+# least turns it into an attention queue (needs-input and finished float to the
+# top) instead of a flat roster of every project.
+agent_panel_sort = "spaces"
+
+[ui.sidebar.spaces]
+# Carry the signal in the SPACES list so the global agents list matters less.
+# state_icon is the space's rolled-up agent state across all its panes — the
+# per-project status dot; state_text spells it out. Worktree children render
+# indented under their parent repo and stay packed as one group.
+rows = [
+  ["state_icon", "workspace"],
+  [
+    { token = "branch", dim = true },
+    { token = "git_status", dim = true },
+    { token = "state_text", dim = true },
+  ],
+]
+
+# -----------------------------------------------------------------------------
+# Notifications — replaces the sketchybar agent chips
+# -----------------------------------------------------------------------------
+
+[ui.toast]
+# Reaches you even when Ghostty is unfocused or you're on another aerospace
+# workspace, which is what helpers/agent_hook.sh used to do.
+delivery = "system"
+# Only fire if the pane is STILL finished/needs-input after this long, so an
+# agent that pauses for a second doesn't spam Notification Center.
+delay_seconds = 2
+
+[ui.sound]
+enabled = false
+
+# -----------------------------------------------------------------------------
+# Advanced
+# -----------------------------------------------------------------------------
+
+[advanced]
+# 50 MB/pane. Agent panes produce a lot of scrollback and the 10 MB default
+# truncates long sessions.
+scrollback_limit_bytes = 52428800

@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+# dot — manage this dotfiles repo.
+#
+# Deliberately small. Stow does the real work; this wraps it so you never have to
+# remember the flags, and adds a doctor check for the things that actually break.
+
+set -euo pipefail
+
+DOTFILES="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly DOTFILES
+
+readonly BOLD=$'\033[1m' RESET=$'\033[0m'
+readonly RED=$'\033[0;31m' GREEN=$'\033[0;32m' YELLOW=$'\033[0;33m' DIM=$'\033[2m'
+
+ok()   { printf '  %s✓%s %s\n' "$GREEN" "$RESET" "$1"; }
+warn() { printf '  %s!%s %s\n' "$YELLOW" "$RESET" "$1"; }
+bad()  { printf '  %s✗%s %s\n' "$RED" "$RESET" "$1"; }
+head_() { printf '\n%s%s%s\n' "$BOLD" "$1" "$RESET"; }
+
+need() {
+  command -v "$1" >/dev/null 2>&1 || {
+    bad "$1 is required but not installed"
+    return 1
+  }
+}
+
+# -----------------------------------------------------------------------------
+
+cmd_stow() {
+  need stow || exit 1
+  head_ "Stowing $DOTFILES/home -> $HOME"
+  # -R restows: unlink then relink, which clears links to files you deleted or
+  # renamed. Plain `stow home` would leave those dangling.
+  stow -R -v -d "$DOTFILES" -t "$HOME" home
+  ok "stowed"
+}
+
+cmd_unstow() {
+  need stow || exit 1
+  head_ "Removing symlinks"
+  stow -D -v -d "$DOTFILES" -t "$HOME" home
+  warn "configs are now only in $DOTFILES — nothing is wired to \$HOME"
+}
+
+cmd_diff() {
+  head_ "Stow plan (dry run)"
+  stow -n -v -d "$DOTFILES" -t "$HOME" home 2>&1 | grep -v "^WARNING" || ok "nothing to change"
+}
+
+cmd_brew() {
+  need brew || exit 1
+  head_ "Installing from packages/Brewfile"
+  # --no-upgrade keeps this fast and non-surprising; `dot update` upgrades.
+  brew bundle install --file="$DOTFILES/packages/Brewfile" --no-upgrade
+  ok "packages installed"
+}
+
+cmd_dump() {
+  need brew || exit 1
+  head_ "Refreshing packages/Brewfile from this machine"
+  brew bundle dump --file="$DOTFILES/packages/Brewfile" --force
+  ok "Brewfile updated — review the diff before committing"
+}
+
+cmd_update() {
+  head_ "Pulling"
+  git -C "$DOTFILES" pull --ff-only
+  cmd_stow
+  cmd_brew
+  cmd_plugins
+}
+
+cmd_plugins() {
+  head_ "herdr plugins"
+  if ! command -v herdr >/dev/null 2>&1; then
+    warn "herdr not installed; skipping"
+    return 0
+  fi
+  # heherdr is a plugin SOURCE tree, not a stowed config: herdr links it by
+  # absolute path, so it must be relinked whenever the repo moves.
+  if [ -f "$DOTFILES/heherdr/herdr-plugin.toml" ]; then
+    ( cd "$DOTFILES/heherdr" && bun install --frozen-lockfile >/dev/null 2>&1 || true )
+    herdr plugin unlink heherdr >/dev/null 2>&1 || true
+    herdr plugin link "$DOTFILES/heherdr" >/dev/null && ok "linked heherdr"
+  fi
+  herdr server reload-config >/dev/null 2>&1 && ok "herdr config reloaded" || warn "herdr not running"
+}
+
+cmd_doctor() {
+  local fail=0
+
+  head_ "Tools"
+  for t in stow brew git nvim herdr bun fzf; do
+    if command -v "$t" >/dev/null 2>&1; then ok "$t"; else bad "$t missing"; fail=1; fi
+  done
+
+  head_ "Symlinks"
+  local expected=(
+    .zshrc .zshenv .tmux.conf
+    .config/ghostty/config .config/herdr/config.toml .config/btop/btop.conf
+    .config/nvim .config/sketchybar
+    .pi/agent/settings.json .claude/settings.json
+  )
+  for rel in "${expected[@]}"; do
+    local p="$HOME/$rel"
+    if [ -L "$p" ] && [ -e "$p" ]; then ok "$rel"
+    elif [ -L "$p" ]; then bad "$rel -> broken link"; fail=1
+    elif [ -e "$p" ]; then warn "$rel is a real file, not stowed (run: dot stow)"
+    else bad "$rel missing"; fail=1
+    fi
+  done
+
+  head_ "Secrets must NOT be in the repo"
+  # A credential inside the repo means a folded symlink captured a directory it
+  # should not have. Worth failing loudly rather than warning.
+  local leaked=0
+  while IFS= read -r found; do
+    bad "tracked credential: $found"; leaked=1; fail=1
+  done < <(git -C "$DOTFILES" ls-files | grep -E '(auth|credential)[^/]*\.json$' || true)
+  [ "$leaked" -eq 0 ] && ok "no credentials tracked"
+
+  head_ "Runtime state must NOT be in the repo"
+  local dirty=0
+  while IFS= read -r found; do
+    bad "tracked runtime state: $found"; dirty=1; fail=1
+  done < <(git -C "$DOTFILES" ls-files | grep -E '\.(sock|log)$|session\.json$|node_modules/' || true)
+  [ "$dirty" -eq 0 ] && ok "no runtime state tracked"
+
+  head_ "Fonts"
+  if /Applications/Ghostty.app/Contents/MacOS/ghostty +list-fonts 2>/dev/null | grep -q "^Maple Mono NF$"; then
+    ok "Maple Mono NF"
+  else
+    warn "Maple Mono NF not found (brew install --cask font-maple-mono-nf)"
+  fi
+
+  printf '\n'
+  if [ "$fail" -eq 0 ]; then ok "healthy"; else bad "problems above"; return 1; fi
+}
+
+usage() {
+  cat <<EOF
+${BOLD}dot${RESET} — dotfiles management
+
+${BOLD}USAGE${RESET}
+    dot <command>
+
+${BOLD}COMMANDS${RESET}
+    stow        Symlink home/ into \$HOME (idempotent, -R restow)
+    unstow      Remove those symlinks
+    diff        Dry-run stow and show what would change
+    brew        Install from packages/Brewfile
+    dump        Regenerate packages/Brewfile from this machine
+    plugins     Relink herdr plugins and reload herdr config
+    update      Pull, stow, brew, plugins
+    doctor      Check tools, symlinks, and that no secrets or state got tracked
+
+${DIM}Repo: $DOTFILES${RESET}
+EOF
+}
+
+case "${1:-}" in
+  stow)    cmd_stow ;;
+  unstow)  cmd_unstow ;;
+  diff)    cmd_diff ;;
+  brew)    cmd_brew ;;
+  dump)    cmd_dump ;;
+  plugins) cmd_plugins ;;
+  update)  cmd_update ;;
+  doctor)  cmd_doctor ;;
+  ""|-h|--help|help) usage ;;
+  *) printf '%sunknown command: %s%s\n\n' "$RED" "$1" "$RESET"; usage; exit 1 ;;
+esac

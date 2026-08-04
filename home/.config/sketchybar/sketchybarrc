@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Entry point. Lives in ~/Projects/hanif-sketchybar, symlinked to ~/.config/sketchybar.
+
+source "$CONFIG_DIR/design.sh" # palette (colors.sh) + shared design tokens
+
+export PLUGIN_DIR="$CONFIG_DIR/plugins"
+export HELPER_DIR="$CONFIG_DIR/helpers"
+
+ITEM_DIR="$CONFIG_DIR/items"
+
+# ---- Bar: floating, rounded, blurred ----------------------------------------
+sketchybar --bar \
+  position=top \
+  height=40 \
+  margin=13 \
+  y_offset=4 \
+  corner_radius=14 \
+  border_width=2 \
+  border_color=$BAR_BORDER \
+  blur_radius=28 \
+  color=$BAR_COLOR \
+  shadow=off \
+  sticky=on \
+  padding_left=10 \
+  padding_right=10
+
+# ---- Defaults ----------------------------------------------------------------
+sketchybar --default \
+  icon.font="$FONT:Bold:14.0" \
+  icon.color=$TEXT \
+  label.font="$FONT:SemiBold:13.0" \
+  label.color=$TEXT \
+  icon.padding_left=8 \
+  icon.padding_right=4 \
+  label.padding_left=4 \
+  label.padding_right=8 \
+  background.corner_radius=9 \
+  background.height=26 \
+  padding_left=3 \
+  padding_right=3
+
+# ---- Items -------------------------------------------------------------------
+source "$ITEM_DIR/spaces.sh"     # left:  aerospace workspaces
+source "$ITEM_DIR/programs.sh"   # left:  dock-style running-apps menu
+# Deprecated in favour of herdr's own Agent panel + system notifications.
+# The chips were tmux-coupled (liveness via `tmux list-panes`, click-jump via
+# tmux window index), so they cannot work under herdr. Scripts kept on disk
+# (items/agents.sh, plugins/agents.sh, plugins/agent_click.sh,
+# helpers/agent_hook.sh) — re-source this line to bring them back for tmux.
+# source "$ITEM_DIR/agents.sh"   # center: running AI agent sessions
+source "$ITEM_DIR/clock.sh"      # right: date + time
+source "$ITEM_DIR/status.sh"     # right: cpu / volume / wifi / battery
+
+sketchybar --update

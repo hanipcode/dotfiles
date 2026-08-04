@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(find:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(mv:*)",
+      "Bash(grep:*)",
+      "Bash(cp:*)",
+      "Bash(mkdir:*)",
+      "mcp__example-ui-registry__get_styling_guidance",
+      "mcp__example-ui-registry__search_components",
+      "mcp__example-ui-registry__get_component_info",
+      "mcp__example-ui-registry__list_component_files",
+      "mcp__example-ui-registry__read_file_from_github",
+      "mcp__example-ui-registry__get_theme_info",
+      "Bash(npm run typecheck:*)",
+      "Bash(npx:*)",
+      "Bash(npm run lint)",
+      "Bash(npm run lint:*)",
+      "Bash(turbo typecheck:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh api:*)",
+      "Bash(gh pr checks:*)",
+      "Bash(npm test:*)",
+      "Bash(rm:*)",
+      "WebFetch(domain:dev.to)",
+      "WebFetch(domain:testing-library.com)",
+      "WebFetch(domain:claritydev.net)",
+      "WebFetch(domain:react-hook-form.com)",
+      "WebFetch(domain:github.com)",
+      "Bash(npm run test:ci:*)",
+      "Bash(turbo test:ci:*)",
+      "Bash(git checkout:*)",
+      "Bash(turbo lint:*)",
+      "WebFetch(domain:docs.anthropic.com)",
+      "Bash(echo $HOME)",
+      "Bash(claude mcp:*)",
+      "Bash(source:*)",
+      "mcp__mcp-atlassian__jira_get_all_projects",
+      "mcp__mcp-atlassian__jira_get_user_profile",
+      "Bash(env)",
+      "Bash(echo:*)",
+      "mcp__mcp-atlassian__jira_get_issue",
+      "mcp__mcp-atlassian__jira_search",
+      "mcp__mcp-atlassian__jira_get_transitions",
+      "mcp__mcp-atlassian__jira_transition_issue",
+      "mcp__Framelink_Figma_MCP__get_figma_data",
+      "Bash(ls:*)",
+      "Bash(git diff:*)",
+      "Bash(npm ls:*)",
+      "WebFetch(domain:vercel.com)",
+      "Bash(npm link:*)",
+      "Bash(npm run build:*)",
+      "WebSearch",
+      "Bash(gh pr list:*)",
+      "Bash(tail:*)",
+      "Bash(cat:*)",
+      "Read(//tmp/**)",
+      "Bash(git restore:*)",
+      "Bash(git rm:*)",
+      "WebFetch(domain:oxc.rs)",
+      "Bash(git log:*)",
+      "Bash(git cherry-pick:*)",
+      "Bash(docker build:*)",
+      "Bash(xargs:*)",
+      "Bash(cd:*)",
+      "Bash(for file in *.tsx **/*.tsx)",
+      "Bash(do [ -f \"$file\" ])",
+      "Bash(done)",
+      "Read(//Users/hanifmuhammad/**)",
+      "Bash(docker logs:*)",
+      "Bash(docker-compose stop:*)",
+      "Bash(docker-compose rm:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(git mv:*)",
+      "Bash(sed:*)",
+      "Bash(npm view:*)",
+      "Bash(npm install:*)"
+    ],
+    "defaultMode": "bypassPermissions",
+    "additionalDirectories": [
+      "/Users/hanifmuhammad/Projects/example-ui"
+    ]
+  },
+  "model": "opus",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash '/Users/hanifmuhammad/.claude/hooks/herdr-agent-state.sh' session",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "bunx -y ccstatusline@latest",
+    "padding": 0
+  },
+  "enabledPlugins": {
+    "figma@claude-plugins-official": true,
+    "slack@claude-plugins-official": true,
+    "atlassian@claude-plugins-official": true
+  },
+  "tui": "default",
+  "skipDangerousModePermissionPrompt": true,
+  "feedbackSurveyState": {
+    "lastShownTime": 1754036707243
+  }
+}

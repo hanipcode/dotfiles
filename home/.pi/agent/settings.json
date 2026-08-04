@@ -1,0 +1,10 @@
+{
+  "lastChangelogVersion": "0.83.0",
+  "theme": "catppuccin-macchiato",
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-5.5",
+  "defaultThinkingLevel": "medium",
+  "packages": [
+    "npm:@plannotator/pi-extension"
+  ]
+}

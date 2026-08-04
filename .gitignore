@@ -1,0 +1,61 @@
+# Stow symlinks whole directories when the target does not exist, so tools then
+# write their runtime state INTO this repo. Everything below is that state.
+
+.DS_Store
+*.log
+
+# --- nvim ---------------------------------------------------------------------
+# ~/.config/nvim is a folded symlink, so lazy.nvim and undo history land here.
+home/.config/nvim/lazy-lock.json
+home/.config/nvim/.undodir/
+home/.config/nvim/spell/
+
+# --- sketchybar ---------------------------------------------------------------
+home/.config/sketchybar/*.log
+
+# --- herdr --------------------------------------------------------------------
+# ~/.config/herdr stays a REAL directory so stow links only config.toml and
+# leaves these outside the repo. Listed anyway in case that ever changes.
+home/.config/herdr/*.log
+home/.config/herdr/*.sock
+home/.config/herdr/session.json
+home/.config/herdr/session-history.json
+home/.config/herdr/release-notes.json
+home/.config/herdr/plugins.json
+home/.config/herdr/.plugins.lock
+home/.config/herdr/plugins/
+
+# --- pi -----------------------------------------------------------------------
+# auth.json holds provider credentials. Keep settings + themes, nothing else.
+home/.pi/agent/auth.json
+home/.pi/agent/models-store.json
+home/.pi/agent/trust.json
+home/.pi/agent/sessions/
+home/.pi/agent/npm/
+home/.pi/agent/mcp-oauth/
+home/.pi/todos/
+
+# --- opencode -----------------------------------------------------------------
+home/.config/opencode/node_modules/
+home/.config/opencode/bun.lock
+home/.config/opencode/package.json
+home/.config/opencode/package-lock.json
+home/.config/opencode/*.bak
+# herdr installs its own agent-state integration here; not ours to track.
+home/.config/opencode/plugins/
+home/.config/opencode/plugin/
+
+# --- claude -------------------------------------------------------------------
+home/.claude/.credentials.json
+home/.claude/projects/
+home/.claude/todos/
+home/.claude/statsig/
+home/.claude/shell-snapshots/
+home/.claude/history.jsonl
+
+# --- heherdr (herdr plugin source, linked by path, not stowed) ----------------
+heherdr/node_modules/
+
+# --- machine-local escape hatch -----------------------------------------------
+# Anything you need on this machine only. Sourced by .zshrc if present.
+home/.config/zsh/local.zsh

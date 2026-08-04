@@ -1,0 +1,51 @@
+# Ghostty theme
+theme = Catppuccin Macchiato
+
+# Updates
+auto-update-channel = stable
+
+# Shell integrations
+shell-integration = zsh
+quit-after-last-window-closed = true
+
+# Font family
+# Maple Mono NF (brew install --cask font-maple-mono-nf) — ligatures, Nerd Font
+# icons, and real italics at every weight, which FiraCode never had.
+# The "NF" in the family name is the icon-patched build; without it the powerline
+# and devicon glyphs in sketchybar/nvim/starship fall back to Apple Symbols.
+font-family = Maple Mono NF
+
+# Font size
+font-size = 14
+
+# Opacity of split windows
+unfocused-split-opacity = 0.97
+
+# Set the background-opacity to be fully opaque
+background-opacity = 1.0
+
+# Cursor style
+cursor-style-blink = true
+
+# Clipboard settings
+clipboard-read = allow
+clipboard-write = allow
+
+# macos options
+macos-option-as-alt = true
+macos-titlebar-proxy-icon = hidden
+
+# Always show ghostty as the title
+title = ghostty
+
+# Window settings
+window-width = 90
+window-height = 30
+window-colorspace = display-p3
+window-padding-color = background
+window-padding-balance = true
+window-padding-x = 0
+window-padding-y = 0
+
+# Decrease scroll sensitivity
+mouse-scroll-multiplier = 0.3

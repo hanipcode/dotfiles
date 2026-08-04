@@ -1,0 +1,39 @@
+id = "heherdr"
+name = "heherdr"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+description = "Modal (vim-style) herdr plugins — OpenTUI + React + Effect"
+platforms = ["macos", "linux"]
+
+# One plugin id, many entrypoints. Every plugin in this repo is a `heherdr`
+# subcommand, so adding one means adding an [[actions]] + [[panes]] pair here —
+# no second install, no second config dir, no duplicated bootstrap.
+#
+# The id is load-bearing: it keys the config dir
+# (~/.config/herdr/plugins/config/heherdr), the state dir
+# (~/.local/state/herdr/plugins/heherdr) and every `heherdr.<action>` binding.
+# Renaming it orphans all three.
+
+[[build]]
+command = ["bun", "install", "--frozen-lockfile"]
+
+# --- worktree -----------------------------------------------------------------
+# The action is what a keybinding fires; it asks herdr to open the pane below.
+# Bind it in ~/.config/herdr/config.toml:
+#
+#   [[keys.command]]
+#   key = "prefix+shift+t"
+#   type = "plugin_action"
+#   command = "heherdr.worktree"
+#   description = "manage project worktrees"
+
+[[actions]]
+id = "worktree"
+title = "Worktrees"
+command = ["bun", "run", "bin/heherdr.ts", "open", "worktree"]
+
+[[panes]]
+id = "worktree"
+title = "Worktrees"
+placement = "overlay"
+command = ["bun", "run", "bin/heherdr.ts", "worktree"]
