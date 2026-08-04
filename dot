@@ -127,7 +127,15 @@ cmd_doctor() {
   [ "$dirty" -eq 0 ] && ok "no runtime state tracked"
 
   head_ "Fonts"
-  if /Applications/Ghostty.app/Contents/MacOS/ghostty +list-fonts 2>/dev/null | grep -q "^Maple Mono NF$"; then
+  # Capture first, then match. Piping into `grep -q` under `set -o pipefail`
+  # races: grep exits on the first hit, ghostty dies of SIGPIPE (141), and
+  # pipefail turns that into a failed condition — a false negative that only
+  # shows up sometimes.
+  local fonts=""
+  if [ -x /Applications/Ghostty.app/Contents/MacOS/ghostty ]; then
+    fonts="$(/Applications/Ghostty.app/Contents/MacOS/ghostty +list-fonts 2>/dev/null || true)"
+  fi
+  if printf '%s\n' "$fonts" | grep -qx "Maple Mono NF"; then
     ok "Maple Mono NF"
   else
     warn "Maple Mono NF not found (brew install --cask font-maple-mono-nf)"
