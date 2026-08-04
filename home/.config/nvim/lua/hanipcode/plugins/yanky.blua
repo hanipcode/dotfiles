@@ -1,0 +1,17 @@
+return {
+	"gbprod/yanky.nvim",
+	opts = {
+		ring = { storage = "sqlite" },
+	},
+	dependencies = { "folke/snacks.nvim", "kkharji/sqlite.lua" },
+	keys = {
+		{
+			"<leader>pv",
+			function()
+				Snacks.picker.yanky()
+			end,
+			mode = { "n", "x" },
+			desc = "Open Yank History",
+		},
+	},
+}

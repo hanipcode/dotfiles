@@ -5,8 +5,8 @@
 *.log
 
 # --- nvim ---------------------------------------------------------------------
-# ~/.config/nvim is a folded symlink, so lazy.nvim and undo history land here.
-home/.config/nvim/lazy-lock.json
+# ~/.config/nvim is a folded symlink, so undo history lands here.
+# lazy-lock.json IS tracked on purpose: it pins plugin revisions.
 home/.config/nvim/.undodir/
 home/.config/nvim/spell/
 

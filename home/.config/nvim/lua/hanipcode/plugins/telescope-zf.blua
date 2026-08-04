@@ -1,0 +1,1 @@
+return { "natecraddock/telescope-zf-native.nvim", requires = "nvim-telescope/telescope.nvim" }

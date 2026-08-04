@@ -1,0 +1,8 @@
+return {
+	{
+		dir = "~/Projects/jenga-nvim",
+		config = function()
+			require("jenga-git")
+		end,
+	},
+}

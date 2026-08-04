@@ -1,0 +1,14 @@
+return {
+	"akinsho/toggleterm.nvim",
+	version = "*",
+	keys = {
+		{ "<leader>t", "<cmd>ToggleTerm<CR>", desc = "Toggle floating terminal" },
+	},
+	opts = {
+		direction = "float",
+		float_opts = {
+			border = "curved",
+		},
+		open_mapping = false, -- We use our own keymap
+	},
+}

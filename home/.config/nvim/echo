@@ -1,0 +1,8 @@
+after
+chroma.log
+codecompanion-workspace.json
+echo
+init.lua
+lazy-lock.json
+lua
+nvim.log

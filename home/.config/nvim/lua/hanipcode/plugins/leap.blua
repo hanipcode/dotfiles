@@ -1,0 +1,199 @@
+return {
+	"ggandor/leap.nvim",
+	dependencies = {
+		"tpope/vim-repeat", -- For dot-repeat support
+	},
+	config = function()
+		local leap = require("leap")
+
+		-- Enable leap.nvim with default settings
+		leap.create_default_mappings()
+
+		-- Recommended tweaks from the documentation
+
+		-- 1. Greying out the search area (dim the non-matched area)
+		vim.api.nvim_set_hl(0, "LeapBackdrop", { link = "Comment" })
+
+		-- 2. Highlight groups customization for better visibility
+		vim.api.nvim_set_hl(0, "LeapMatch", {
+			fg = "white", -- for light themes, change to 'black'
+			bold = true,
+			nocombine = true,
+		})
+
+		-- Primary labels (the first character you see)
+		vim.api.nvim_set_hl(0, "LeapLabelPrimary", {
+			fg = "red",
+			bold = true,
+			nocombine = true,
+		})
+
+		-- Secondary labels (subsequent characters)
+		vim.api.nvim_set_hl(0, "LeapLabelSecondary", {
+			fg = "blue",
+			bold = true,
+			nocombine = true,
+		})
+
+		-- 3. Bidirectional search configuration (search in both directions)
+		-- This makes 's' search in both directions instead of just forward
+		vim.keymap.set({ "n", "x", "o" }, "s", function()
+			leap.leap({ target_windows = { vim.fn.win_getid() } })
+		end)
+
+		-- 4. Case-insensitive search
+		leap.opts.case_sensitive = false
+
+		-- 5.
+		leap.opts.safe_labels = {
+			"s",
+			"f",
+			"n",
+			"u",
+			"t",
+			"/",
+			"S",
+			"F",
+			"N",
+			"L",
+			"H",
+			"M",
+			"U",
+			"G",
+			"T",
+			"?",
+			"Z",
+		}
+
+		-- 6. Configure label characters
+		leap.opts.labels = {
+			"s",
+			"f",
+			"n",
+			"j",
+			"k",
+			"l",
+			"h",
+			"o",
+			"d",
+			"w",
+			"e",
+			"m",
+			"b",
+			"u",
+			"y",
+			"v",
+			"r",
+			"g",
+			"t",
+			"c",
+			"x",
+			"/",
+			"z",
+			"S",
+			"F",
+			"N",
+			"J",
+			"K",
+			"L",
+			"H",
+			"O",
+			"D",
+			"W",
+			"E",
+			"M",
+			"B",
+			"U",
+			"Y",
+			"V",
+			"R",
+			"G",
+			"T",
+			"C",
+			"X",
+			"?",
+			"Z",
+		}
+
+		-- 7. Special keys configuration
+		leap.opts.special_keys = {
+			next_target = "<enter>",
+			prev_target = "<tab>",
+			next_group = "<space>",
+			prev_group = "<backspace>",
+		}
+
+		-- 8. Equivalence classes for similar characters
+		leap.opts.equivalence_classes = { " \t\r\n", "([{", ")]}", "'\"`" }
+
+		-- 9. Max phase one targets (number of targets before showing labels)
+		leap.opts.max_phase_one_targets = nil
+
+		-- 10. Highlight unlabeled phase one targets
+		leap.opts.highlight_unlabeled_phase_one_targets = false
+
+		-- 11. Max highlighted traversal targets
+		leap.opts.max_highlighted_traversal_targets = 10
+
+		-- 12. Substitute_chars configuration for special characters
+		leap.opts.substitute_chars = {
+			["\r"] = "¬",
+			["\n"] = "¬",
+		}
+
+		-- Highly recommended: define a preview filter to reduce visual noise
+		-- and the blinking effect after the first keypress
+		-- (`:h leap.opts.preview`). You can still target any visible
+		-- positions if needed, but you can define what is considered an
+		-- exceptional case.
+		-- Exclude whitespace and the middle of alphabetic words from preview:
+		--   foobar[baaz] = quux
+		--   ^----^^^--^^-^-^--^
+		require("leap").opts.preview = function(ch0, ch1, ch2)
+			return not (ch1:match("%s") or (ch0:match("%a") and ch1:match("%a") and ch2:match("%a")))
+		end
+
+		-- Define equivalence classes for brackets and quotes, in addition to
+		-- the default whitespace group:
+		require("leap").opts.equivalence_classes = {
+			" \t\r\n",
+			"([{",
+			")]}",
+			"'\"`",
+		}
+
+		-- Use the traversal keys to repeat the previous motion without
+		-- explicitly invoking Leap:
+		require("leap.user").set_repeat_keys("<enter>", "<backspace>")
+
+		-- Optional: Additional keymaps for specific leap modes
+
+		-- Leap to line (similar to easymotion's line motion)
+		vim.keymap.set({ "n", "x", "o" }, "gs", function()
+			leap.leap({
+				target_windows = { vim.fn.win_getid() },
+				opts = {
+					labels = {},
+					-- Only match at line beginnings
+					match_pattern = "^.",
+				},
+			})
+		end)
+
+		-- Leap from windows (jump to other windows)
+		vim.keymap.set("n", "<leader>sw", function()
+			leap.leap({ target_windows = require("leap.user").get_focusable_windows() })
+		end)
+
+		-- Treesitter integration for smart jumps
+		vim.keymap.set({ "n", "x", "o" }, "gS", function()
+			leap.treesitter()
+		end)
+
+		-- Remote operations (operate on distant text without moving cursor)
+		vim.keymap.set({ "n", "o" }, "gr", function()
+			leap.remote({ action = "yank" })
+		end)
+	end,
+}
+

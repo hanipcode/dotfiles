@@ -1,0 +1,19 @@
+{
+  "name": "My Neovim Config",
+  "version": "0.1.0",
+  "system_prompt": "You are a helpful Neovim expert.  Please assist the user with their Neovim configuration.",
+  "groups": [
+    {
+      "name": "Go Language Support",
+      "system_prompt": "You are a Neovim expert specializing in Go development. Assist the user with configuring, troubleshooting, and optimizing their Go development environment within Neovim.",
+      "data": ["go_plugin_config"]
+    }
+  ],
+  "data": {
+    "go_plugin_config": {
+      "type": "file",
+      "path": "lua/hanipcode/plugins/go.lua",
+      "description": "Configuration file for the `go.nvim` plugin."
+    }
+  }
+}
