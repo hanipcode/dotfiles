@@ -4,6 +4,29 @@
 .DS_Store
 *.log
 
+# --- secrets ------------------------------------------------------------------
+# Keep machine credentials out even when a tool writes them into a stowed tree.
+.env
+.env.*
+!.env.example
+!.env.*.example
+.npmrc
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+credentials.json
+credentials.*
+secrets.json
+secrets.*
+
+# Internal work instructions may be retained locally, but never published.
+private/
+home/.agents/skills/*-backend-workflow/
+home/.claude/skills/*-backend-workflow
+
 # --- nvim ---------------------------------------------------------------------
 # ~/.config/nvim is a folded symlink, so undo history lands here.
 # lazy-lock.json IS tracked on purpose: it pins plugin revisions.

@@ -44,9 +44,9 @@ Read retained output from the current project or from anywhere on the machine:
 
 ```sh
 runbox logs dev --json
-runbox logs example-operator-dev-fe dev --json
-runbox logs example-operator-dev-fe setup --json
-runbox logs example-operator-dev-fe dev --lines 500 --json
+runbox logs sample-web-app dev --json
+runbox logs sample-web-app setup --json
+runbox logs sample-web-app dev --lines 500 --json
 ```
 
 The project argument accepts the project name, repo ID, or `name#repoId` key from
@@ -62,14 +62,14 @@ For a later runtime crash, inspect logs first, then restart the tracked command:
 
 ```sh
 runbox restart dev --json
-runbox restart example-operator-dev-fe dev --json
+runbox restart sample-web-app dev --json
 ```
 
 Use doctor before manual recovery. It is read-only and does not start a daemon:
 
 ```sh
 runbox doctor --json
-runbox doctor example-operator-dev-fe --json
+runbox doctor sample-web-app --json
 ```
 
 ## Stacked branches
@@ -106,9 +106,9 @@ Useful noninteractive commands:
 runbox status --json
 runbox commands --json
 runbox projects --json
-runbox logs example-operator-dev-fe dev --json
-runbox restart example-operator-dev-fe dev --json
-runbox doctor example-operator-dev-fe --json
+runbox logs sample-web-app dev --json
+runbox restart sample-web-app dev --json
+runbox doctor sample-web-app --json
 runbox switch --no-tui --json
 runbox switch --no-tui --json --commit-message "fix: describe change"
 runbox switch --no-tui --json --agent-commit

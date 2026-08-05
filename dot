@@ -376,7 +376,7 @@ cmd_doctor() {
   local leaked=0
   while IFS= read -r found; do
     bad "tracked credential: $found"; leaked=1; fail=1
-  done < <(git -C "$DOTFILES" ls-files | grep -E '(auth|credential)[^/]*\.json$' || true)
+  done < <(git -C "$DOTFILES" ls-files | grep -Ei '(^|/)(\.env($|\.)|\.npmrc$|.*(auth|credential|secret)[^/]*\.json$|.*\.(pem|key|p12|pfx|jks|keystore)$)' || true)
   [ "$leaked" -eq 0 ] && ok "no credentials tracked"
 
   head_ "Runtime state must NOT be in the repo"

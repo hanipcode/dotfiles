@@ -143,11 +143,6 @@ fpath+=("$(brew --prefix)/share/zsh/site-functions")
 alias vim=nvim
 export PATH="$HOME/.local/bin:$PATH"
 
-# Atlassian MCP Configuration
-export ATLASSIAN_URL="https://example.atlassian.net"
-export ATLASSIAN_USERNAME="muhammad.hanif@example.invalid"
-
-# Figma MCP Configuration
 export PATH="$PATH:/Applications/Docker.app/Contents/Resources/bin/"
 
 export PATH="$HOME/go/bin:$PATH"
@@ -162,8 +157,6 @@ export ATAC_MAIN_DIR=~/.config/atac
 export EDITOR=vim
 export PATH="/Users/hanifmuhammad/.config/herd-lite/bin:$PATH"
 export PHP_INI_SCAN_DIR="/Users/hanifmuhammad/.config/herd-lite/bin:$PHP_INI_SCAN_DIR"
-
-# @exampleorg GitHub Packages auth for npm (.npmrc uses ${NPM_SECRET})
 
 # opencode
 export PATH=/Users/hanifmuhammad/.opencode/bin:$PATH

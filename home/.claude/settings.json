@@ -9,12 +9,6 @@
       "Bash(grep:*)",
       "Bash(cp:*)",
       "Bash(mkdir:*)",
-      "mcp__example-ui-registry__get_styling_guidance",
-      "mcp__example-ui-registry__search_components",
-      "mcp__example-ui-registry__get_component_info",
-      "mcp__example-ui-registry__list_component_files",
-      "mcp__example-ui-registry__read_file_from_github",
-      "mcp__example-ui-registry__get_theme_info",
       "Bash(npm run typecheck:*)",
       "Bash(npx:*)",
       "Bash(npm run lint)",
@@ -24,7 +18,6 @@
       "Bash(gh api:*)",
       "Bash(gh pr checks:*)",
       "Bash(npm test:*)",
-      "Bash(rm:*)",
       "WebFetch(domain:dev.to)",
       "WebFetch(domain:testing-library.com)",
       "WebFetch(domain:claritydev.net)",
@@ -37,11 +30,8 @@
       "WebFetch(domain:docs.anthropic.com)",
       "Bash(echo $HOME)",
       "Bash(claude mcp:*)",
-      "Bash(source:*)",
       "mcp__mcp-atlassian__jira_get_all_projects",
       "mcp__mcp-atlassian__jira_get_user_profile",
-      "Bash(env)",
-      "Bash(echo:*)",
       "mcp__mcp-atlassian__jira_get_issue",
       "mcp__mcp-atlassian__jira_search",
       "mcp__mcp-atlassian__jira_get_transitions",
@@ -56,10 +46,7 @@
       "WebSearch",
       "Bash(gh pr list:*)",
       "Bash(tail:*)",
-      "Bash(cat:*)",
       "Read(//tmp/**)",
-      "Bash(git restore:*)",
-      "Bash(git rm:*)",
       "WebFetch(domain:oxc.rs)",
       "Bash(git log:*)",
       "Bash(git cherry-pick:*)",
@@ -69,7 +56,6 @@
       "Bash(for file in *.tsx **/*.tsx)",
       "Bash(do [ -f \"$file\" ])",
       "Bash(done)",
-      "Read(//Users/hanifmuhammad/**)",
       "Bash(docker logs:*)",
       "Bash(docker-compose stop:*)",
       "Bash(docker-compose rm:*)",
@@ -79,10 +65,7 @@
       "Bash(npm view:*)",
       "Bash(npm install:*)"
     ],
-    "defaultMode": "bypassPermissions",
-    "additionalDirectories": [
-      "/Users/hanifmuhammad/Projects/example-ui"
-    ]
+    "defaultMode": "default"
   },
   "model": "opus",
   "hooks": {
@@ -110,7 +93,6 @@
     "atlassian@claude-plugins-official": true
   },
   "tui": "default",
-  "skipDangerousModePermissionPrompt": true,
   "feedbackSurveyState": {
     "lastShownTime": 1754036707243
   }

@@ -8,10 +8,9 @@
 
 source "$CONFIG_DIR/design.sh"
 
-# Drops noisy, near-universal tokens from project-derived labels (repo names
-# at work all share "example"/"dashboard"/"fe" — they add length, not signal).
+# Drops noisy, near-universal tokens from project-derived labels.
 # Hyphen-token match only, so "feature" or "café" survive untouched.
-STRIP_WORDS="example dashboard fe hanif hanipcode"
+STRIP_WORDS="dashboard fe hanif hanipcode ${AGENT_STRIP_WORDS:-}"
 strip_label() {
   local name="$1" out="" tok first=1 toks
   IFS='-' read -ra toks <<<"$name"

@@ -155,9 +155,9 @@ runbox stack --no-tui --json dev
 runbox status --json
 runbox commands --json
 runbox projects --json
-runbox logs example-operator-dev-fe dev --json
-runbox restart example-operator-dev-fe dev --json
-runbox doctor example-operator-dev-fe --json
+runbox logs sample-web-app dev --json
+runbox restart sample-web-app dev --json
+runbox doctor sample-web-app --json
 ```
 
 JSON is a stable envelope. Successful commands return:

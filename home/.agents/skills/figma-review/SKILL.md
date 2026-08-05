@@ -5,7 +5,7 @@ description: Parse a Figma section/frame into a structured map of user stories, 
 
 # Figma Review Skill
 
-Example designs follow a consistent spatial pattern inside Figma sections. This skill decodes that pattern from raw metadata into a structured breakdown — story → flows → steps → screens — with node IDs the user can act on.
+Some product designs follow a consistent spatial pattern inside Figma sections. This skill decodes that pattern from raw metadata into a structured breakdown — story → flows → steps → screens — with node IDs the user can act on.
 
 ## When to use
 
@@ -22,7 +22,7 @@ Do NOT trigger for:
 
 ## The spatial convention
 
-Inside a Example section, frames are laid out on a grid. The Y-coordinate tells you the **role** of a frame; the X-coordinate tells you its **position within a flow**.
+Inside such a section, frames are laid out on a grid. The Y-coordinate tells you the **role** of a frame; the X-coordinate tells you its **position within a flow**.
 
 ```
 ┌─ Section (e.g. "Duplicate - Details") ────────────────────────┐
@@ -174,24 +174,21 @@ Walk the design context output and pull every user-facing string into the matchi
 Output as a markdown table per screen. Bold the screen name and include the node ID so the developer can re-fetch it.
 
 ```markdown
-## Wording — **Reverse Transaction dialog** (`30936:102300`)
+## Wording — **Delete Item dialog** (`123:456`)
 
 | Bucket | String | Notes |
 |---|---|---|
-| Dialog title | Reverse Transaction | |
-| Section | Status Transition | |
-| Section | Transaction Details | |
-| Field label | Remarks | required |
-| Placeholder | Enter remarks | |
-| Field label | Transaction Confirmation | required, file upload |
-| Validation | Remarks should not be empty | from error-state variant |
-| Validation | Transaction confirmation should not be empty | from error-state variant |
-| Primary button | Reverse | destructive |
+| Dialog title | Delete item | |
+| Section | Item details | |
+| Field label | Reason | required |
+| Placeholder | Enter a reason | |
+| Validation | Reason is required | from error-state variant |
+| Primary button | Delete | destructive |
 | Secondary button | Cancel | |
-| Confirm dialog title | Reverse this transaction? | from `30901:257322` |
-| Confirm primary | Yes, reverse | |
+| Confirm dialog title | Delete this item? | from `123:789` |
+| Confirm primary | Yes, delete | |
 | Confirm secondary | Cancel | |
-| Success toast | Transaction is successfully reversed | from toast variant |
+| Success toast | Item deleted | from toast variant |
 ```
 
 End the manifest with a one-liner pointing at the linter:
