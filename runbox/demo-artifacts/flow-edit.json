@@ -1,0 +1,40 @@
+{
+  "clips": [
+    {
+      "from": "sunset-prompt",
+      "to": "sunset-complete",
+      "speed": 3,
+      "caption": "Luna makes a different change in the second worktree"
+    },
+    {
+      "from": "web-preparing",
+      "to": "web-running",
+      "speed": 10,
+      "caption": "Runbox renders immediately while preparing and starting Vite"
+    },
+    {
+      "from": "electron-start",
+      "to": "electron-running",
+      "speed": 5,
+      "caption": "The same managed runner starts Electron alongside Vite"
+    },
+    {
+      "from": "switch-to-sunset",
+      "to": "sunset-live",
+      "speed": 12,
+      "caption": "Switching to sunset restarts both active commands"
+    },
+    {
+      "from": "switch-back-ocean",
+      "to": "ocean-live-again",
+      "speed": 2.5,
+      "caption": "Switching back restores the ocean commit"
+    },
+    {
+      "from": "ocean-live-again",
+      "to": "final-dashboard",
+      "speed": 2.5,
+      "caption": "Final status: web and Electron are both running"
+    }
+  ]
+}

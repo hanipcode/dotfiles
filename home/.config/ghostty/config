@@ -48,4 +48,4 @@ window-padding-x = 0
 window-padding-y = 0
 
 # Decrease scroll sensitivity
-mouse-scroll-multiplier = 0.3
+mouse-scroll-multiplier = 0.4

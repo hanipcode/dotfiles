@@ -30,7 +30,9 @@ vim.o.splitright = true
 vim.o.splitbelow = true
 
 vim.opt.updatetime = 50
-vim.o.wrap = false
+vim.o.wrap = true
+vim.o.linebreak = true
+vim.o.breakindent = true
 vim.opt.scrolloff = 16
 vim.opt.incsearch = true
 vim.opt.hlsearch = false

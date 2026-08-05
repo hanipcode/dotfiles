@@ -3,14 +3,24 @@
 if [[ $# -eq 1 ]]; then
     selected=$1
 else
-    selected=$(find ~/Projects ~/.config -mindepth 1 -maxdepth 1 -type d | fzf)
+    # ~/.dotfiles is named explicitly rather than added as a root: find lists the
+    # CHILDREN of a root, and the repo root itself is what we want to open.
+    selected=$( { find ~/Projects ~/.config -mindepth 1 -maxdepth 1 -type d
+                  echo "$HOME/.dotfiles"; } | fzf)
 fi
 
 if [[ -z $selected ]]; then
     exit 0
 fi
 
-selected_name=$(basename "$(dirname "$selected")")_$(basename "$selected")
+# <parent>_<dir> so ~/.config/nvim and ~/Projects/nvim stay distinguishable.
+# Directories directly under $HOME skip the parent segment, which would otherwise
+# be the username (~/.dotfiles -> hanifmuhammad__dotfiles).
+if [[ $(dirname "$selected") == "$HOME" ]]; then
+    selected_name=$(basename "$selected")
+else
+    selected_name=$(basename "$(dirname "$selected")")_$(basename "$selected")
+fi
 selected_name=$(echo "$selected_name" | tr '.:' '__')
 tmux_running=$(pgrep tmux)
 

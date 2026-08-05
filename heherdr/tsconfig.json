@@ -1,4 +1,5 @@
 {
+  "$schema": "./node_modules/@effect/language-service/schema.json",
   "compilerOptions": {
     "lib": ["ESNext", "DOM"],
     "target": "ESNext",
@@ -20,6 +21,12 @@
     "skipLibCheck": true,
 
     "types": ["bun", "react"],
+
+    "plugins": [
+      {
+        "name": "@effect/language-service"
+      }
+    ],
 
     "paths": {
       "@heherdr/framework": ["./src/framework/index.ts"],

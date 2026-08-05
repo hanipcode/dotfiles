@@ -8,7 +8,7 @@
  */
 
 import { Command } from "@effect/cli"
-import { Console, Effect, Exit } from "effect"
+import { Console, Effect, Exit, Runtime } from "effect"
 import { GitClient, HerdrClient, runApp } from "@heherdr/framework"
 import type {
   HerdrError,
@@ -21,6 +21,9 @@ import { WorktreeUi, type RemoveOutcome } from "./Ui.tsx"
 const handler = Effect.gen(function* () {
   const herdr = yield* HerdrClient.HerdrClient
   const git = yield* GitClient.GitClient
+  const runtime = yield* Effect.runtime<never>()
+  const runPromise = Runtime.runPromise(runtime)
+  const runPromiseExit = Runtime.runPromiseExit(runtime)
 
   const initial = yield* herdr.worktreeList()
   const repoRoot = initial.source.repo_root
@@ -32,7 +35,7 @@ const handler = Effect.gen(function* () {
     // so forcing has to unlock first. Failure here is non-fatal: the removal
     // below will report the real reason.
     if (force) {
-      await Effect.runPromiseExit(git.unlockWorktree(repoRoot, worktree.path))
+      await runPromiseExit(git.unlockWorktree(repoRoot, worktree.path))
     }
 
     // herdr can only remove a worktree it holds open as a workspace; anything
@@ -43,7 +46,7 @@ const handler = Effect.gen(function* () {
         ? git.removeWorktree(repoRoot, worktree.path, { force })
         : herdr.worktreeRemove(worktree.open_workspace_id, { force })
 
-    const exit = await Effect.runPromiseExit(effect)
+    const exit = await runPromiseExit(effect)
     if (Exit.isSuccess(exit)) {
       return { ok: true, message: `removed ${worktree.branch ?? worktree.path}` }
     }
@@ -67,15 +70,13 @@ const handler = Effect.gen(function* () {
       onInspect={async (worktree) => {
         // A failed inspection must not reject into React — degrade to "unknown"
         // and let the removal itself report the real problem.
-        const exit = await Effect.runPromiseExit(
-          git.safety(repoRoot, worktree.path, worktree.branch),
-        )
+        const exit = await runPromiseExit(git.safety(repoRoot, worktree.path, worktree.branch))
         return Exit.isSuccess(exit)
           ? exit.value
           : { dirtyFiles: 0, unmergedCommits: 0, pushedTo: null, locked: false, lockReason: null }
       }}
       onRemove={remove}
-      onRefresh={() => Effect.runPromise(herdr.worktreeList())}
+      onRefresh={() => runPromise(herdr.worktreeList())}
     />,
   )
 

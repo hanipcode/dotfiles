@@ -1,0 +1,25 @@
+{
+  "clips": [
+    {
+      "from": "web-main-opencode-retry",
+      "to": "web-main-opencode-actual-done",
+      "speed": 8,
+      "hold_ms": 1000,
+      "caption": "OpenCode and GPT-5.6 Luna make a normal UI edit on main"
+    },
+    {
+      "from": "web-main-opencode-actual-done",
+      "to": "web-main-switched",
+      "speed": 8,
+      "hold_ms": 800,
+      "caption": "Review the diff, commit it, and switch the managed runner"
+    },
+    {
+      "from": "web-main-switched",
+      "to": "web-main-updated-running",
+      "speed": 5,
+      "hold_ms": 1200,
+      "caption": "Runbox confirms Vite is running from the new main commit"
+    }
+  ]
+}

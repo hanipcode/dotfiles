@@ -101,6 +101,9 @@ bun install
 herdr plugin link .
 bun run typecheck && bun test
 
+effect-solutions show services-and-layers error-handling
+bun run effect:diagnostics
+
 bun run bin/heherdr.ts worktree      # run outside herdr, no pane needed
 herdr plugin log heherdr             # a crashing overlay just closes; look here
 ```

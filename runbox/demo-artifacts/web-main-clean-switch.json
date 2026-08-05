@@ -1,0 +1,18 @@
+{
+  "clips": [
+    {
+      "from": "clean-main-actual-start",
+      "to": "clean-main-switched",
+      "speed": 6,
+      "hold_ms": 800,
+      "caption": "Inspect the new main commit and switch the managed runner"
+    },
+    {
+      "from": "clean-main-switched",
+      "to": "clean-main-running",
+      "speed": 5,
+      "hold_ms": 1200,
+      "caption": "Runbox confirms Vite is running from that commit"
+    }
+  ]
+}

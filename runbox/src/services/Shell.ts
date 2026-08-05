@@ -1,0 +1,134 @@
+import { Context, Effect, Layer } from "effect"
+import { spawn } from "node:child_process"
+import { CommandFailed } from "../errors.ts"
+
+export interface RunOptions {
+  readonly cwd: string
+  readonly env?: Readonly<Record<string, string | undefined>>
+  readonly allowFailure?: boolean
+  readonly timeoutMs?: number
+  readonly onStdout?: (chunk: string) => void
+  readonly onStderr?: (chunk: string) => void
+}
+
+export interface CommandOutput {
+  readonly stdout: string
+  readonly stderr: string
+  readonly exitCode: number
+}
+
+export class Shell extends Context.Tag("@runbox/Shell")<
+  Shell,
+  {
+    readonly run: (
+      command: ReadonlyArray<string>,
+      options: RunOptions,
+    ) => Effect.Effect<CommandOutput, CommandFailed>
+  }
+>() {
+  static readonly layer = Layer.succeed(
+    Shell,
+    Shell.of({
+      run: Effect.fn("Shell.run")(function* (
+        command: ReadonlyArray<string>,
+        options: RunOptions,
+      ) {
+        const [stdout, stderr, exitCode] = yield* Effect.async<
+          readonly [string, string, number],
+          CommandFailed
+        >((resume) => {
+          const [executable, ...args] = command
+          if (executable === undefined) {
+            resume(Effect.fail(new CommandFailed({
+              command: "",
+              cwd: options.cwd,
+              exitCode: -1,
+              stderr: "empty command",
+            })))
+            return
+          }
+          const detached = process.platform !== "win32"
+          const child = spawn(executable, args, {
+            cwd: options.cwd,
+            env: { ...process.env, ...options.env },
+            stdio: ["ignore", "pipe", "pipe"],
+            detached,
+          })
+          let stdout = ""
+          let stderr = ""
+          let settled = false
+          let killTimer: ReturnType<typeof setTimeout> | undefined
+          const terminate = () => {
+            if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) return
+            try {
+              if (detached) process.kill(-child.pid, "SIGTERM")
+              else child.kill("SIGTERM")
+            } catch {
+              child.kill("SIGTERM")
+            }
+            killTimer = setTimeout(() => {
+              if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) return
+              try {
+                if (detached) process.kill(-child.pid, "SIGKILL")
+                else child.kill("SIGKILL")
+              } catch {
+                // The process already exited.
+              }
+            }, 1_000)
+            killTimer.unref()
+          }
+          const finish = (effect: Effect.Effect<readonly [string, string, number], CommandFailed>) => {
+            if (settled) return
+            settled = true
+            if (timeout !== undefined) clearTimeout(timeout)
+            resume(effect)
+          }
+          child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+            stdout += chunk
+            options.onStdout?.(chunk)
+          })
+          child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+            stderr += chunk
+            options.onStderr?.(chunk)
+          })
+          child.once("error", (cause) => finish(Effect.fail(new CommandFailed({
+            command: command.join(" "),
+            cwd: options.cwd,
+            exitCode: -1,
+            stderr: String(cause),
+          }))))
+          child.once("close", (code) => {
+            if (killTimer !== undefined) clearTimeout(killTimer)
+            finish(Effect.succeed([stdout, stderr, code ?? -1]))
+          })
+          const timeout = options.timeoutMs === undefined
+            ? undefined
+            : setTimeout(() => {
+                terminate()
+                finish(Effect.fail(new CommandFailed({
+                  command: command.join(" "),
+                  cwd: options.cwd,
+                  exitCode: -1,
+                  stderr: `command timed out after ${options.timeoutMs}ms`,
+                })))
+              }, options.timeoutMs)
+          timeout?.unref()
+          return Effect.sync(() => {
+            if (timeout !== undefined) clearTimeout(timeout)
+            terminate()
+          })
+        })
+
+        if (exitCode !== 0 && options.allowFailure !== true) {
+          return yield* new CommandFailed({
+            command: command.join(" "),
+            cwd: options.cwd,
+            exitCode,
+            stderr: stderr.trim(),
+          })
+        }
+        return { stdout, stderr, exitCode }
+      }),
+    }),
+  )
+}

@@ -15,6 +15,25 @@ behave like vim instead.
 Stack: **OpenTUI + React**, **Effect**, `@effect/cli`, `@effect-atom/atom-react`,
 **Bun**.
 
+## Effect development
+
+The Effect language service is configured in `tsconfig.json`, and `bun install`
+patches the workspace TypeScript compiler through the `prepare` script. This makes
+`bun run typecheck` include Effect-specific diagnostics in addition to TypeScript
+errors. Use `bun run effect:diagnostics` to run only the Effect diagnostic pass.
+
+The Effect Solutions CLI is installed globally. Before inventing a pattern, query
+the relevant field-manual topics, for example:
+
+```sh
+effect-solutions show services-and-layers error-handling testing
+```
+
+This project is on Effect v3. Its source is cloned at
+`~/.local/share/effect-solutions/effect-v3`; use it for API definitions and real v3
+examples. `~/.local/share/effect-solutions/effect` is an Effect v4 checkout and must
+not be used as evidence that an API exists in this project.
+
 ## Shape
 
 One binary, one subcommand per plugin. One herdr plugin id (`heherdr`) with many
@@ -137,6 +156,7 @@ Renaming it orphans all three.
 
 ```sh
 bun run typecheck                    # must be clean
+bun run effect:diagnostics           # Effect-specific diagnostics
 bun test                             # modal core
 bun run bin/heherdr.ts <plugin>      # run outside herdr; no pane required
 herdr plugin action list --plugin heherdr

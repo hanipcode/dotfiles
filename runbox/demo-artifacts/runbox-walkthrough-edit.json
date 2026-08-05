@@ -1,0 +1,32 @@
+{
+  "clips": [
+    {
+      "from": "ocean-project",
+      "to": "ocean-web-running",
+      "speed": 3,
+      "hold_ms": 1200,
+      "caption": "From the ocean project, runbox starts Vite in its managed worktree"
+    },
+    {
+      "from": "ocean-web-detached",
+      "to": "ocean-electron-running",
+      "speed": 3,
+      "hold_ms": 1200,
+      "caption": "The same project starts Electron through runbox"
+    },
+    {
+      "from": "sunset-project",
+      "to": "sunset-switch-complete",
+      "speed": 4,
+      "hold_ms": 800,
+      "caption": "From the sunset worktree, runbox switches the shared runner"
+    },
+    {
+      "from": "sunset-switch-complete",
+      "to": "sunset-all-running",
+      "speed": 2,
+      "hold_ms": 1500,
+      "caption": "Runbox confirms Vite and Electron restarted on the sunset commit"
+    }
+  ]
+}

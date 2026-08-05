@@ -1,0 +1,8 @@
+#!/bin/sh
+if [ -n "$RUNBOX_TEST_OPENCODE_DELAY" ]; then
+  sleep "$RUNBOX_TEST_OPENCODE_DELAY"
+fi
+if [ -n "$RUNBOX_TEST_OPENCODE_COUNT_FILE" ]; then
+  printf 'run\n' >> "$RUNBOX_TEST_OPENCODE_COUNT_FILE"
+fi
+printf '%s\n' '{"type":"text","part":{"text":"prepared"}}'

@@ -1,0 +1,17 @@
+{
+  "clips": [
+    {
+      "from": "electron-shell-start",
+      "to": "electron-repo-inspected",
+      "speed": 6,
+      "caption": "Enter the Electron project, confirm a clean branch, and inspect Git worktrees"
+    },
+    {
+      "from": "electron-repo-inspected",
+      "to": "electron-baseline-running",
+      "speed": 4,
+      "hold_ms": 1200,
+      "caption": "Start the normal Electron command through runbox"
+    }
+  ]
+}

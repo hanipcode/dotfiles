@@ -10,7 +10,10 @@
   "scripts": {
     "heherdr": "bun run bin/heherdr.ts",
     "typecheck": "tsc --noEmit",
+    "effect:diagnostics": "effect-language-service diagnostics --project tsconfig.json",
+    "effect:docs": "effect-solutions",
     "link:herdr": "herdr plugin unlink heherdr || true && herdr plugin link .",
+    "prepare": "effect-language-service patch",
     "test": "bun test"
   },
   "dependencies": {
@@ -27,6 +30,7 @@
     "react": "^19.2.0"
   },
   "devDependencies": {
+    "@effect/language-service": "^0.87.1",
     "@types/bun": "^1.3.14",
     "@types/react": "^19.2.0",
     "typescript": "^5.7.0"

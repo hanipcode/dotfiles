@@ -6,8 +6,21 @@
 
 set -euo pipefail
 
-DOTFILES="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# -P resolves symlinks: ~/.config/dotfiles is a link to this repo (see
+# ensure_sessionizer_link), and running `dot` through it with a logical pwd would
+# make stow write links routed through that extra hop
+# (~/.zshrc -> .config/dotfiles/home/.zshrc).
+DOTFILES="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly DOTFILES
+
+# The sessionizer pickers list the CHILDREN of ~/Projects and ~/.config, so a repo
+# at ~/.dotfiles can only appear as a child of a root that is already scanned.
+# herdr's sessionizer plugin has no way to name a single path; this link is it.
+# (tmux-sessionizer names ~/.dotfiles directly and does not need the link.)
+readonly SESSIONIZER_LINK="$HOME/.config/dotfiles"
+readonly STOW_IGNORE='^skills-lock\.json$'
+readonly SKILLS_DIR="$DOTFILES/home/.agents/skills"
+readonly DISABLED_SKILLS_DIR="$DOTFILES/archive/skills"
 
 readonly BOLD=$'\033[1m' RESET=$'\033[0m'
 readonly RED=$'\033[0;31m' GREEN=$'\033[0;32m' YELLOW=$'\033[0;33m' DIM=$'\033[2m'
@@ -26,25 +39,223 @@ need() {
 
 # -----------------------------------------------------------------------------
 
+ensure_sessionizer_link() {
+  if [ -L "$SESSIONIZER_LINK" ]; then
+    if [ "$(readlink "$SESSIONIZER_LINK")" = "$DOTFILES" ]; then
+      ok "~/.config/dotfiles -> $DOTFILES"
+    else
+      warn "~/.config/dotfiles points at $(readlink "$SESSIONIZER_LINK"), not $DOTFILES"
+    fi
+  elif [ -e "$SESSIONIZER_LINK" ]; then
+    warn "~/.config/dotfiles is a real path, not a link — leaving it alone"
+  else
+    ln -s "$DOTFILES" "$SESSIONIZER_LINK"
+    ok "linked ~/.config/dotfiles -> $DOTFILES (sessionizer picker)"
+  fi
+}
+
+sync_claude_skill_links() {
+  local canonical_dir="$SKILLS_DIR"
+  local claude_dir="$DOTFILES/home/.claude/skills"
+  local skill_source skill link target
+
+  mkdir -p "$claude_dir"
+
+  for skill_source in "$canonical_dir"/*; do
+    [ -f "$skill_source/SKILL.md" ] || continue
+    skill="${skill_source##*/}"
+    link="$claude_dir/$skill"
+    target="../../.agents/skills/$skill"
+
+    if [ -L "$link" ] && [ "$(readlink "$link")" = "$target" ]; then
+      continue
+    elif [ -e "$link" ] || [ -L "$link" ]; then
+      warn ".claude/skills/$skill already exists; leaving it unchanged"
+    else
+      ln -s "$target" "$link"
+      ok "linked .claude/skills/$skill -> canonical skill"
+    fi
+  done
+
+  for link in "$claude_dir"/*; do
+    [ -L "$link" ] || continue
+    target="$(readlink "$link")"
+    case "$target" in
+      ../../.agents/skills/*)
+        skill="${link##*/}"
+        if [ ! -f "$canonical_dir/$skill/SKILL.md" ]; then
+          rm "$link"
+          ok "removed stale .claude/skills/$skill link"
+        fi
+        ;;
+    esac
+  done
+}
+
 cmd_stow() {
   need stow || exit 1
+  need git || exit 1
+  git -C "$DOTFILES" submodule update --init --recursive
+  sync_claude_skill_links
   head_ "Stowing $DOTFILES/home -> $HOME"
   # -R restows: unlink then relink, which clears links to files you deleted or
   # renamed. Plain `stow home` would leave those dangling.
-  stow -R -v -d "$DOTFILES" -t "$HOME" home
+  stow -R -v --ignore="$STOW_IGNORE" -d "$DOTFILES" -t "$HOME" home
   ok "stowed"
+  # Not part of home/, so stow neither creates nor removes it.
+  ensure_sessionizer_link
 }
 
 cmd_unstow() {
   need stow || exit 1
   head_ "Removing symlinks"
-  stow -D -v -d "$DOTFILES" -t "$HOME" home
+  stow -D -v --ignore="$STOW_IGNORE" -d "$DOTFILES" -t "$HOME" home
+  if [ -L "$SESSIONIZER_LINK" ] && [ "$(readlink "$SESSIONIZER_LINK")" = "$DOTFILES" ]; then
+    rm "$SESSIONIZER_LINK"
+    ok "removed ~/.config/dotfiles"
+  fi
   warn "configs are now only in $DOTFILES — nothing is wired to \$HOME"
 }
 
 cmd_diff() {
   head_ "Stow plan (dry run)"
-  stow -n -v -d "$DOTFILES" -t "$HOME" home 2>&1 | grep -v "^WARNING" || ok "nothing to change"
+  stow -n -v --ignore="$STOW_IGNORE" -d "$DOTFILES" -t "$HOME" home 2>&1 | grep -v "^WARNING" || ok "nothing to change"
+}
+
+cmd_skills() {
+  case "${1:-}" in
+    disable)
+      shift
+      cmd_skill_disable "$@"
+      return
+      ;;
+    enable)
+      shift
+      cmd_skill_enable "$@"
+      return
+      ;;
+  esac
+
+  need npx || exit 1
+  local workdir="$DOTFILES/home"
+  if [ "${1:-}" = "init" ]; then
+    workdir="$SKILLS_DIR"
+  elif [ "${1:-}" = "update" ]; then
+    cmd_skills_update "$@"
+    cmd_stow
+    return
+  fi
+  ( cd "$workdir" && npx skills "$@" )
+  cmd_stow
+}
+
+validate_skill_name() {
+  local skill="${1:-}"
+  if [[ ! "$skill" =~ ^[a-z0-9][a-z0-9._-]*$ ]]; then
+    bad "skill name must use lowercase letters, numbers, dots, underscores, or hyphens"
+    return 1
+  fi
+}
+
+cmd_skill_disable() {
+  if [ "$#" -ne 1 ]; then
+    bad "usage: dot skills disable <name>"
+    return 1
+  fi
+
+  local skill="$1"
+  validate_skill_name "$skill"
+  local source="$SKILLS_DIR/$skill"
+  local destination="$DISABLED_SKILLS_DIR/$skill"
+
+  if [ ! -f "$source/SKILL.md" ]; then
+    bad "enabled skill not found: $skill"
+    return 1
+  elif [ -e "$destination" ]; then
+    bad "disabled skill already exists: $skill"
+    return 1
+  elif [ -e "$source/.git" ]; then
+    bad "$skill is Git-backed; disabling it would invalidate its repository metadata"
+    return 1
+  fi
+
+  mkdir -p "$DISABLED_SKILLS_DIR"
+  mv "$source" "$destination"
+  ok "disabled $skill"
+  cmd_stow
+}
+
+cmd_skill_enable() {
+  if [ "$#" -ne 1 ]; then
+    bad "usage: dot skills enable <name>"
+    return 1
+  fi
+
+  local skill="$1"
+  validate_skill_name "$skill"
+  local source="$DISABLED_SKILLS_DIR/$skill"
+  local destination="$SKILLS_DIR/$skill"
+
+  if [ ! -f "$source/SKILL.md" ]; then
+    bad "disabled skill not found: $skill"
+    return 1
+  elif [ -e "$destination" ]; then
+    bad "enabled skill already exists: $skill"
+    return 1
+  fi
+
+  mkdir -p "$SKILLS_DIR"
+  mv "$source" "$destination"
+  rmdir "$DISABLED_SKILLS_DIR" "$DOTFILES/archive" 2>/dev/null || true
+  ok "enabled $skill"
+  cmd_stow
+}
+
+cmd_skills_update() {
+  local -a args=("${@:2}") enabled=()
+  local arg skill_source has_global=0 has_project=0 has_names=0
+
+  for arg in "${args[@]}"; do
+    case "$arg" in
+      -g|--global) has_global=1 ;;
+      -p|--project) has_project=1 ;;
+    esac
+  done
+
+  if [ "$has_global" -eq 1 ] && [ "$has_project" -eq 1 ]; then
+    bad "update global and project skills separately"
+    return 1
+  fi
+
+  for arg in "${args[@]}"; do
+    case "$arg" in
+      -*) ;;
+      *)
+        has_names=1
+        if [ -f "$DISABLED_SKILLS_DIR/$arg/SKILL.md" ] && [ "$has_global" -eq 0 ]; then
+          bad "$arg is disabled; enable it before updating"
+          return 1
+        fi
+        ;;
+    esac
+  done
+
+  if [ "$has_global" -eq 0 ] && [ "$has_names" -eq 0 ]; then
+    for skill_source in "$SKILLS_DIR"/*; do
+      [ -f "$skill_source/SKILL.md" ] || continue
+      enabled+=("${skill_source##*/}")
+    done
+    if [ "${#enabled[@]}" -eq 0 ]; then
+      warn "no enabled project skills to update"
+      return 0
+    fi
+    args+=("${enabled[@]}")
+  fi
+
+  if [ "$has_global" -eq 0 ] && [ "$has_project" -eq 0 ]; then
+    args+=("--project")
+  fi
+  ( cd "$DOTFILES/home" && npx skills update "${args[@]}" )
 }
 
 cmd_brew() {
@@ -68,6 +279,7 @@ cmd_update() {
   cmd_stow
   cmd_brew
   cmd_plugins
+  cmd_tools
 }
 
 cmd_plugins() {
@@ -86,11 +298,20 @@ cmd_plugins() {
   herdr server reload-config >/dev/null 2>&1 && ok "herdr config reloaded" || warn "herdr not running"
 }
 
+cmd_tools() {
+  head_ "personal tools"
+  need bun || return 1
+  if [ -f "$DOTFILES/runbox/package.json" ]; then
+    ( cd "$DOTFILES/runbox" && bun install --frozen-lockfile >/dev/null && bun link >/dev/null )
+    ok "linked runbox"
+  fi
+}
+
 cmd_doctor() {
   local fail=0
 
   head_ "Tools"
-  for t in stow brew git nvim herdr bun fzf; do
+  for t in stow brew git nvim herdr bun fzf runbox; do
     if command -v "$t" >/dev/null 2>&1; then ok "$t"; else bad "$t missing"; fail=1; fi
   done
 
@@ -100,6 +321,7 @@ cmd_doctor() {
     .config/ghostty/config .config/herdr/config.toml .config/btop/btop.conf
     .config/nvim .config/sketchybar
     .pi/agent/settings.json .claude/settings.json
+    .config/dotfiles  # not stowed — ensure_sessionizer_link makes this one
   )
   for rel in "${expected[@]}"; do
     local p="$HOME/$rel"
@@ -107,6 +329,44 @@ cmd_doctor() {
     elif [ -L "$p" ]; then bad "$rel -> broken link"; fail=1
     elif [ -e "$p" ]; then warn "$rel is a real file, not stowed (run: dot stow)"
     else bad "$rel missing"; fail=1
+    fi
+  done
+
+  head_ "Agent skills"
+  local skill_source skill
+  for skill_source in "$DOTFILES"/home/.agents/skills/*; do
+    [ -d "$skill_source" ] || continue
+    skill="${skill_source##*/}"
+    if [ -f "$HOME/.agents/skills/$skill/SKILL.md" ]; then
+      ok ".agents/skills/$skill"
+    else
+      bad ".agents/skills/$skill missing SKILL.md"
+      fail=1
+    fi
+
+    local claude_link="$HOME/.claude/skills/$skill"
+    if [ -L "$claude_link" ] && [ "$claude_link/SKILL.md" -ef "$HOME/.agents/skills/$skill/SKILL.md" ]; then
+      ok ".claude/skills/$skill -> canonical skill"
+    else
+      bad ".claude/skills/$skill is not linked to the canonical skill"
+      fail=1
+    fi
+  done
+
+  for skill_source in "$DISABLED_SKILLS_DIR"/*; do
+    [ -d "$skill_source" ] || continue
+    skill="${skill_source##*/}"
+    if [ ! -f "$skill_source/SKILL.md" ]; then
+      bad "archive/skills/$skill missing SKILL.md"
+      fail=1
+    elif [ -e "$HOME/.agents/skills/$skill" ] || [ -L "$HOME/.agents/skills/$skill" ]; then
+      bad "archive/skills/$skill is disabled but still exposed in .agents/skills"
+      fail=1
+    elif [ -e "$HOME/.claude/skills/$skill" ] || [ -L "$HOME/.claude/skills/$skill" ]; then
+      bad "archive/skills/$skill is disabled but still exposed in .claude/skills"
+      fail=1
+    else
+      ok "archive/skills/$skill (disabled)"
     fi
   done
 
@@ -159,6 +419,8 @@ ${BOLD}COMMANDS${RESET}
     brew        Install from packages/Brewfile
     dump        Regenerate packages/Brewfile from this machine
     plugins     Relink herdr plugins and reload herdr config
+    tools       Install and link personal CLI tools
+    skills ...  Manage skills; supports enable/disable plus the upstream CLI
     update      Pull, stow, brew, plugins
     doctor      Check tools, symlinks, and that no secrets or state got tracked
 
@@ -173,6 +435,8 @@ case "${1:-}" in
   brew)    cmd_brew ;;
   dump)    cmd_dump ;;
   plugins) cmd_plugins ;;
+  tools)   cmd_tools ;;
+  skills)  shift; cmd_skills "$@" ;;
   update)  cmd_update ;;
   doctor)  cmd_doctor ;;
   ""|-h|--help|help) usage ;;

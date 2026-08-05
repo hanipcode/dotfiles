@@ -8,7 +8,7 @@ export ZSH="$HOME/.oh-my-zsh"
 # load a random theme each time oh-my-zsh is loaded, in which case,
 # to know which specific one was loaded, run: echo $RANDOM_THEME
 # See https://github.com/ohmyzsh/ohmyzsh/wiki/Themes
-ZSH_THEME="robbyrussell"
+ZSH_THEME=""
 
 # Set list of themes to pick from when loading at random
 # Setting this variable when ZSH_THEME=random will cause zsh to load
@@ -139,8 +139,6 @@ export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
 
 fpath+=("$(brew --prefix)/share/zsh/site-functions")
-autoload -U promptinit; promptinit
-prompt pure
 
 alias vim=nvim
 export PATH="$HOME/.local/bin:$PATH"
@@ -169,6 +167,8 @@ export PHP_INI_SCAN_DIR="/Users/hanifmuhammad/.config/herd-lite/bin:$PHP_INI_SCA
 
 # opencode
 export PATH=/Users/hanifmuhammad/.opencode/bin:$PATH
+
+eval "$(starship init zsh)"
 
 
 # Machine-local credentials live outside this repository.

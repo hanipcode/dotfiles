@@ -1,0 +1,25 @@
+{
+  "clips": [
+    {
+      "from": "electron-main-before-opencode",
+      "to": "electron-main-opencode-done",
+      "speed": 7,
+      "hold_ms": 1000,
+      "caption": "OpenCode and GPT-5.6 Luna make a desktop UI edit on main"
+    },
+    {
+      "from": "electron-main-opencode-done",
+      "to": "electron-main-switched",
+      "speed": 8,
+      "hold_ms": 800,
+      "caption": "Review the diff, commit it, and switch the Electron runner"
+    },
+    {
+      "from": "electron-main-switched",
+      "to": "electron-main-updated-running",
+      "speed": 5,
+      "hold_ms": 1200,
+      "caption": "Runbox confirms Electron restarted from the new main commit"
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "clips": [
+    {
+      "from": "web-before-worktree",
+      "to": "web-feature-entered",
+      "speed": 7,
+      "hold_ms": 800,
+      "caption": "Create, list, and enter an independent feature worktree"
+    },
+    {
+      "from": "web-feature-entered",
+      "to": "web-feature-opencode-done",
+      "speed": 8,
+      "hold_ms": 1000,
+      "caption": "OpenCode makes a different edit inside the feature worktree"
+    },
+    {
+      "from": "web-feature-opencode-done",
+      "to": "web-feature-switched",
+      "speed": 8,
+      "hold_ms": 800,
+      "caption": "Commit the worktree edit and run runbox switch"
+    },
+    {
+      "from": "web-feature-switched",
+      "to": "web-feature-running",
+      "speed": 5,
+      "hold_ms": 1200,
+      "caption": "The same Vite runner now follows the feature worktree commit"
+    }
+  ]
+}

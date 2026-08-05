@@ -1,0 +1,3 @@
+[submodule "home/.agents/skills/img2threejs"]
+	path = home/.agents/skills/img2threejs
+	url = git@github.com:img2threejs/img2threejs.git

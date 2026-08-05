@@ -71,6 +71,8 @@ brew "herdr"
 brew "hugo"
 # Lightweight and flexible command-line JSON processor
 brew "jq"
+# Handy way to save and run project-specific commands
+brew "just"
 # Little helper to run CNCF's k3s in Docker
 brew "k3d"
 # Modern load testing tool, using Go and JavaScript
@@ -127,8 +129,8 @@ brew "pkgconf"
 brew "postgresql@14"
 # Cloud native development platform
 brew "pulumi"
-# Pretty, minimal and fast ZSH prompt
-brew "pure"
+# Cross-shell prompt
+brew "starship"
 # Interpreted, interactive, object-oriented programming language
 brew "python@3.11"
 # Install various Ruby versions and implementations

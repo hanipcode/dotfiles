@@ -1,0 +1,32 @@
+{
+  "clips": [
+    {
+      "from": "electron-before-worktree",
+      "to": "electron-feature-entered",
+      "speed": 7,
+      "hold_ms": 800,
+      "caption": "Create, list, and enter an independent Electron worktree"
+    },
+    {
+      "from": "electron-feature-entered",
+      "to": "electron-feature-opencode-done",
+      "speed": 7,
+      "hold_ms": 1000,
+      "caption": "OpenCode makes a second desktop edit inside that worktree"
+    },
+    {
+      "from": "electron-feature-opencode-done",
+      "to": "electron-feature-switched",
+      "speed": 8,
+      "hold_ms": 800,
+      "caption": "Commit the worktree edit and run runbox switch"
+    },
+    {
+      "from": "electron-feature-switched",
+      "to": "electron-feature-running",
+      "speed": 5,
+      "hold_ms": 1200,
+      "caption": "The Electron runner now follows the feature worktree commit"
+    }
+  ]
+}

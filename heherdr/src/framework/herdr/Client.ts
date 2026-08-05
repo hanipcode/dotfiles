@@ -123,12 +123,10 @@ const make = (): HerdrClient => {
 
       const trimmed = stdout.trim()
       if (trimmed === "") {
-        return yield* Effect.fail(
-          new HerdrSpawnError({
-            command: args,
-            reason: `no output (exit ${exitCode}): ${stderr.trim() || "<empty stderr>"}`,
-          }),
-        )
+        return yield* new HerdrSpawnError({
+          command: args,
+          reason: `no output (exit ${exitCode}): ${stderr.trim() || "<empty stderr>"}`,
+        })
       }
 
       const parsed = yield* Effect.try({
@@ -147,18 +145,17 @@ const make = (): HerdrClient => {
         error?: { code?: string; message?: string }
       }
       if (envelope.error !== undefined) {
-        return yield* Effect.fail(
-          new HerdrError({
-            command: args,
-            code: envelope.error.code ?? "unknown",
-            message: envelope.error.message ?? "unknown herdr error",
-          }),
-        )
+        return yield* new HerdrError({
+          command: args,
+          code: envelope.error.code ?? "unknown",
+          message: envelope.error.message ?? "unknown herdr error",
+        })
       }
       if (envelope.result === undefined) {
-        return yield* Effect.fail(
-          new HerdrSpawnError({ command: args, reason: "envelope had neither result nor error" }),
-        )
+        return yield* new HerdrSpawnError({
+          command: args,
+          reason: "envelope had neither result nor error",
+        })
       }
       return envelope.result
     })

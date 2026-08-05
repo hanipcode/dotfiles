@@ -1,0 +1,17 @@
+{
+  "clips": [
+    {
+      "from": "web-shell-start",
+      "to": "web-repo-inspected",
+      "speed": 6,
+      "caption": "Enter the web project, confirm a clean branch, and inspect Git worktrees"
+    },
+    {
+      "from": "web-repo-inspected",
+      "to": "web-baseline-running",
+      "speed": 4,
+      "hold_ms": 1200,
+      "caption": "Start the normal Vite command through runbox"
+    }
+  ]
+}

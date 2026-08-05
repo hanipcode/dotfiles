@@ -67,11 +67,40 @@ return {
 			},
 		})
 
-		-- TypeScript 7 (tsgo) — the native Go language server, replaces vtsls.
-		-- Uses nvim-lspconfig's bundled `tsgo` config (cmd: tsgo --lsp --stdio).
-		-- Installed globally via: npm install -g @typescript/native-preview
+		local function typescript_root(bufnr)
+			local root_markers = { "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb", "bun.lock" }
+			if vim.fn.has("nvim-0.11.3") == 1 then
+				root_markers = { root_markers, { ".git" } }
+			else
+				table.insert(root_markers, ".git")
+			end
+
+			local project_root = vim.fs.root(bufnr, root_markers)
+			local deno_root = vim.fs.root(bufnr, { "deno.json", "deno.jsonc" })
+			local deno_lock_root = vim.fs.root(bufnr, { "deno.lock" })
+			if deno_lock_root and (not project_root or #deno_lock_root > #project_root) then
+				return nil
+			end
+			if deno_root and (not project_root or #deno_root >= #project_root) then
+				return nil
+			end
+			return project_root or vim.fn.getcwd()
+		end
+
+		local function has_effect_language_service(root)
+			return vim.uv.fs_stat(vim.fs.joinpath(root, "node_modules", "@effect", "language-service")) ~= nil
+		end
+
+		-- TypeScript 7 (tsgo) remains the default. Projects with the Effect language
+		-- service use vtsls instead so tsconfig plugins load through workspace TypeScript.
 		vim.lsp.config("tsgo", {
 			capabilities = capabilities,
+			root_dir = function(bufnr, on_dir)
+				local root = typescript_root(bufnr)
+				if root and not has_effect_language_service(root) then
+					on_dir(root)
+				end
+			end,
 			settings = {
 				typescript = {
 					inlayHints = {
@@ -87,20 +116,25 @@ return {
 		})
 		vim.lsp.enable("tsgo")
 
-		-- vtsls fallback — re-enable this (and disable tsgo above) if tsgo misses something
-		-- require("lspconfig.configs").vtsls = require("vtsls").lspconfig
-		-- require("lspconfig").vtsls.setup({
-		-- 	capabilities = capabilities,
-		-- 	settings = {
-		-- 		typescript = {
-		-- 			tsserver = { useSyntaxServer = "auto", pluginPaths = { "./node_modules" } },
-		-- 		},
-		-- 		vtsls = {
-		-- 			autoUseWorkspaceTsdk = true,
-		-- 			experimental = { completion = { enableServerSideFuzzyMatch = true } },
-		-- 		},
-		-- 	},
-		-- })
+		vim.lsp.config("vtsls", {
+			capabilities = capabilities,
+			root_dir = function(bufnr, on_dir)
+				local root = typescript_root(bufnr)
+				if root and has_effect_language_service(root) then
+					on_dir(root)
+				end
+			end,
+			settings = {
+				typescript = {
+					tsserver = { useSyntaxServer = "auto", pluginPaths = { "./node_modules" } },
+				},
+				vtsls = {
+					autoUseWorkspaceTsdk = true,
+					experimental = { completion = { enableServerSideFuzzyMatch = true } },
+				},
+			},
+		})
+		vim.lsp.enable("vtsls")
 
 		-- mason tool installer
 
@@ -109,6 +143,7 @@ return {
 			ensure_installed = {
 				"biome", -- Biome formatter and linter
 				"golangci-lint",
+				"vtsls",
 				"prettier", -- prettier formatter
 				"prettierd",
 				"stylua", -- lua formatter

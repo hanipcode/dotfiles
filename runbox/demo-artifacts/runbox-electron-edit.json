@@ -1,0 +1,11 @@
+{
+  "clips": [
+    {
+      "from": "ocean-web-detached",
+      "to": "ocean-electron-running",
+      "speed": 3,
+      "hold_ms": 1200,
+      "caption": "The same project starts Electron through runbox"
+    }
+  ]
+}

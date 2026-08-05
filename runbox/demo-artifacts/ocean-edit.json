@@ -1,0 +1,10 @@
+{
+  "clips": [
+    {
+      "from": "ocean-prompt",
+      "to": "ocean-complete",
+      "speed": 4,
+      "caption": "OpenCode uses GPT-5.6 Luna to create the ocean worktree state"
+    }
+  ]
+}

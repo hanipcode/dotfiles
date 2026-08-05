@@ -1,0 +1,11 @@
+{
+  "clips": [
+    {
+      "from": "ocean-project",
+      "to": "ocean-web-running",
+      "speed": 3,
+      "hold_ms": 1200,
+      "caption": "From the ocean project, runbox starts Vite in its managed worktree"
+    }
+  ]
+}
