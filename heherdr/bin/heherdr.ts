@@ -14,13 +14,14 @@
 import { Command } from "@effect/cli"
 import { BunContext, BunRuntime } from "@effect/platform-bun"
 import { Effect, Layer } from "effect"
-import { GitClient, HerdrClient, PluginContext } from "@heherdr/framework"
+import { GhStackClient, GitClient, HerdrClient, PluginContext } from "@heherdr/framework"
 import { openCommand } from "../src/framework/herdr/openPane.ts"
 import { worktreeCommand } from "../src/plugins/worktree/command.tsx"
+import { stackCommand } from "../src/plugins/stack/command.tsx"
 
 const heherdr = Command.make("heherdr").pipe(
   Command.withDescription("Modal herdr plugins — vim-style overlays for herdr"),
-  Command.withSubcommands([worktreeCommand, openCommand]),
+  Command.withSubcommands([worktreeCommand, stackCommand, openCommand]),
 )
 
 const cli = Command.run(heherdr, {
@@ -36,6 +37,7 @@ const cli = Command.run(heherdr, {
 const AppLayer = Layer.mergeAll(
   HerdrClient.layer,
   GitClient.layer,
+  GhStackClient.layer,
   PluginContext.layer,
   BunContext.layer,
 )

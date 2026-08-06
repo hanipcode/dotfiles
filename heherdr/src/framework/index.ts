@@ -11,6 +11,7 @@ export type { Binding, KeyId, KeySpec, ModeSpec } from "./modal/keymap.ts"
 export * as HerdrClient from "./herdr/Client.ts"
 export * as PluginContext from "./herdr/PluginContext.ts"
 export * as GitClient from "./git/Client.ts"
+export * as GhStackClient from "./gh-stack/Client.ts"
 
 export { runApp, useExit, type RunAppOptions, type ExitApi } from "./ui/runApp.tsx"
 

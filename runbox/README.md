@@ -233,15 +233,23 @@ command while activation proceeds. Active gh-stack provenance is displayed as a 
 use `runbox stack <command>` to select and activate a stack.
 
 ```text
-tab                  move between repository, source, and command panes
+p                    focus repositories
+w                    focus sources/worktrees
+c                    focus packages and commands
+o                    focus retained output
+tab / shift+tab      cycle panes forward or backward
 j/k or arrows        move within the focused pane
 enter                inspect the selected repository, source, or command
+f                    filter the focused repository, source, or command pane
 / or ctrl+p          search visible repositories, worktrees, packages, and commands
 ?                    show contextual keyboard help
-r                    review running the selected script
-x                    review switching to the selected worktree
-s                    review stopping the selected command
-R                    review restarting the selected command
-escape               close a plan or command detail
+r                    review running the highlighted script from the command pane
+x                    review switching to the highlighted worktree from the source pane
+s                    review stopping the highlighted/inspected command
+R                    review restarting the highlighted/inspected command
+escape               keep a pane filter and close its input, or close a plan/detail
 q                    detach
 ```
+
+Pane filters are local to each list. Escape leaves a non-empty filter active; reopen it
+with `f` and clear the input to restore every row.

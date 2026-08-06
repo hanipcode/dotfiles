@@ -95,19 +95,45 @@ describe("GlobalDashboard", () => {
     try {
       await setup.flush()
       const frame = setup.captureCharFrame()
-      expect(frame).toContain("runbox  GLOBAL   1 repositories   0 active")
-      expect(frame).toContain("runbox  GLOBAL")
+      expect(frame).not.toContain("runbox  GLOBAL")
+      expect(frame).toContain("operator#operator  fix/dropdown@12345678")
       expect(frame).toContain("repositories")
-      expect(frame).toContain("execution sources")
+      expect(frame).toContain("sources")
+      expect(frame).toContain("p repositories (1)")
+      expect(frame).toContain("w sources (1)")
+      expect(frame).toContain("c packages / commands (1)")
+      expect(frame).toContain("o retained output")
+      expect(frame).not.toContain("repositories1")
+      expect(frame).not.toContain("commands1")
       expect(frame).toContain("fix/dropdown")
       expect(frame).toContain("apps/operator:dev")
       expect(frame).toContain("[ready]")
       expect(frame).not.toContain("available")
-      expect(frame).toContain("detail / retained output")
+      expect(frame).toContain("o retained output")
+      const lines = frame.split("\n")
+      expect(lines[1]?.startsWith(" ╭")).toBe(true)
+      expect(lines[1]).toContain("p repositories (1)")
+      expect(lines[2]).not.toContain("p repositories (1)")
+      const firstLeftBottom = lines.findIndex((line) => line.startsWith(" ╰"))
+      expect(firstLeftBottom).toBeGreaterThan(0)
+      expect(lines[firstLeftBottom + 1]?.slice(0, 35).trim()).toBe("")
+      expect(lines[firstLeftBottom + 2]?.startsWith(" ╭")).toBe(true)
+      const richFrame = setup.captureSpans()
+      const repositoryHeader = richFrame.lines.find((line) => line.spans.some((span) => span.text.includes("repositories (1)")))
+      const shortcutSpan = repositoryHeader?.spans.find((span) => span.text === "p")
+      const labelSpan = repositoryHeader?.spans.find((span) => span.text.includes("repositories (1)"))
+      expect(shortcutSpan).toBeDefined()
+      expect(labelSpan).toBeDefined()
+      expect(shortcutSpan?.fg.equals(labelSpan?.fg)).toBe(false)
 
       setup.resize(72, 20)
       await setup.flush()
       expect(setup.captureCharFrame()).toContain("repositories")
+      setup.resize(140, 28)
+      await setup.flush()
+      const restored = setup.captureCharFrame()
+      expect(restored).toContain("p repositories (1)")
+      expect(restored.split("\n")[1]?.startsWith(" ╭")).toBe(true)
     } finally {
       setup.renderer.destroy()
     }
@@ -115,6 +141,7 @@ describe("GlobalDashboard", () => {
 
   it("reviews a run plan before executing it", async () => {
     let executions = 0
+    let plans = 0
     const plan: ActionPlan = {
       id: "plan",
       stateRevision: "revision",
@@ -137,7 +164,10 @@ describe("GlobalDashboard", () => {
       <GlobalDashboard
         initial={view}
         onInspect={() => Promise.resolve(view)}
-        onPlan={() => Promise.resolve(plan)}
+        onPlan={() => {
+          plans += 1
+          return Promise.resolve(plan)
+        }}
         onCommit={() => Promise.resolve(plan)}
         onExecute={() => {
           executions += 1
@@ -147,6 +177,14 @@ describe("GlobalDashboard", () => {
       { width: 140, height: 28, useMouse: true },
     )
     try {
+      await setup.flush()
+      setup.mockInput.pressKey("r")
+      await Bun.sleep(10)
+      await setup.flush()
+      expect(plans).toBe(0)
+
+      setup.mockInput.pressKey("c")
+      await Bun.sleep(10)
       await setup.flush()
       setup.mockInput.pressKey("r")
       await Bun.sleep(10)
@@ -167,7 +205,61 @@ describe("GlobalDashboard", () => {
       await setup.flush()
       const settled = setup.captureCharFrame()
       expect(settled).not.toContain("started")
-      expect(settled).toContain("tab pane")
+      expect(settled).toContain("p repos")
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  it("keeps dirty-worktree controls separate from changed files", async () => {
+    const dirtyPlan: ActionPlan = {
+      id: "dirty-plan",
+      stateRevision: "revision",
+      intent: {
+        type: "run",
+        repoId: "operator",
+        worktreePath: "/repos/operator",
+        expectedHead: "1234567890abcdef",
+        packagePath: "",
+        script: "dev",
+        args: [],
+      },
+      title: "Run .:dev",
+      effects: [
+        "Migrate legacy storage to ~/.runbox when the daemon is idle",
+        "Commit source worktree changes before switching",
+        "Switch runner a5549902 -> f4514c8d",
+        "Start .:dev",
+      ],
+      requiresConfirmation: true,
+      dirtySummary: [
+        " M packages/app/src/review/review-detail-view.tsx",
+        " M packages/app/src/test/app-browser-support.tsx",
+        " M packages/app/src/review/review-list.tsx",
+      ].join("\n"),
+      dirtyFingerprint: "dirty",
+    }
+    const setup = await testRender(
+      <GlobalDashboard
+        initial={view}
+        onInspect={() => Promise.resolve(view)}
+        onPlan={() => Promise.resolve(dirtyPlan)}
+        onCommit={() => new Promise(() => {})}
+        onExecute={() => new Promise(() => {})}
+      />,
+      { width: 92, height: 24, useMouse: true },
+    )
+    try {
+      await setup.flush()
+      setup.mockInput.pressKey("c")
+      await Bun.sleep(10)
+      await setup.flush()
+      setup.mockInput.pressKey("r")
+      await Bun.sleep(10)
+      await setup.flush()
+      const frame = setup.captureCharFrame()
+      expect(frame).toContain("M packages/app/src/review/review-list.tsx")
+      expect(frame).toContain("c manual message  a Luna message  esc cancel")
     } finally {
       setup.renderer.destroy()
     }
@@ -224,10 +316,242 @@ describe("GlobalDashboard", () => {
     )
     try {
       await setup.flush()
+      setup.mockInput.pressKey("c")
+      await Bun.sleep(10)
+      await setup.flush()
       setup.mockInput.pressKey("r", { shift: true })
       await Bun.sleep(10)
       await setup.flush()
       expect(observed.intentType).toBe("restart")
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  it("focuses panes directly with p, w, c, and o", async () => {
+    const setup = await testRender(
+      <GlobalDashboard
+        initial={view}
+        onInspect={() => Promise.resolve(view)}
+        onPlan={() => new Promise(() => {})}
+        onCommit={() => new Promise(() => {})}
+        onExecute={() => new Promise(() => {})}
+      />,
+      { width: 72, height: 20, useMouse: true },
+    )
+    try {
+      await setup.flush()
+      expect(setup.captureCharFrame()).toContain("p repositories (1)")
+
+      setup.mockInput.pressKey("w")
+      await Bun.sleep(10)
+      await setup.flush()
+      expect(setup.captureCharFrame()).toContain("w sources (1)")
+
+      setup.mockInput.pressKey("c")
+      await Bun.sleep(10)
+      await setup.flush()
+      expect(setup.captureCharFrame()).toContain("c packages / commands (1)")
+
+      setup.mockInput.pressKey("o")
+      await Bun.sleep(10)
+      await setup.flush()
+      expect(setup.captureCharFrame()).toContain("o retained output")
+
+      setup.mockInput.pressKey("p")
+      await Bun.sleep(10)
+      await setup.flush()
+      expect(setup.captureCharFrame()).toContain("p repositories (1)")
+
+      setup.mockInput.pressKey("\t", { shift: true })
+      await Bun.sleep(10)
+      await setup.flush()
+      expect(setup.captureCharFrame()).toContain("o retained output")
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  it("switches the highlighted source rather than the previously inspected source", async () => {
+    const secondPath = "/repos/operator-feature"
+    const multiSourceView: GlobalView = {
+      ...view,
+      selected: view.selected === null ? null : {
+        ...view.selected,
+        worktrees: [
+          ...view.selected.worktrees,
+          {
+            path: secondPath,
+            branch: "feature/next",
+            head: "abcdef1234567890",
+            locked: null,
+            prunable: null,
+            isActiveSource: false,
+            isEnvironmentSource: false,
+          },
+        ],
+      },
+    }
+    const inspectedSecond: GlobalView = {
+      ...multiSourceView,
+      selected: multiSourceView.selected === null ? null : {
+        ...multiSourceView.selected,
+        selectedWorktreePath: secondPath,
+      },
+    }
+    const observed: { worktreePath: string | null } = { worktreePath: null }
+    const setup = await testRender(
+      <GlobalDashboard
+        initial={multiSourceView}
+        onInspect={(query) => Promise.resolve(query?.worktreePath === secondPath ? inspectedSecond : multiSourceView)}
+        onPlan={(intent) => {
+          observed.worktreePath = intent.type === "switch" ? intent.worktreePath : null
+          return Promise.resolve({
+            id: "switch-plan",
+            stateRevision: "revision",
+            intent,
+            title: "Switch managed runner",
+            effects: ["Switch runner"],
+            requiresConfirmation: true,
+            dirtySummary: null,
+            dirtyFingerprint: null,
+          })
+        }}
+        onCommit={() => new Promise(() => {})}
+        onExecute={() => new Promise(() => {})}
+      />,
+      { width: 120, height: 26, useMouse: true },
+    )
+    try {
+      await setup.flush()
+      setup.mockInput.pressKey("w")
+      await Bun.sleep(10)
+      await setup.flush()
+      setup.mockInput.pressKey("f")
+      await Bun.sleep(10)
+      await setup.flush()
+      await setup.mockInput.typeText("feature")
+      setup.mockInput.pressEscape()
+      await Bun.sleep(100)
+      await setup.flush()
+      setup.mockInput.pressKey("x")
+      await Bun.sleep(10)
+      await setup.flush()
+      expect(observed.worktreePath).toBe(secondPath)
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  it("keeps pane filters after escape and clears an empty filter", async () => {
+    const otherRepository = {
+      ...view.repositories[0]!,
+      repoId: "worker",
+      name: "worker",
+      key: "worker#worker",
+      repositoryRoot: "/repos/worker",
+    }
+    const multiRepositoryView: GlobalView = {
+      ...view,
+      repositories: [...view.repositories, otherRepository],
+    }
+    const setup = await testRender(
+      <GlobalDashboard
+        initial={multiRepositoryView}
+        onInspect={() => Promise.resolve(multiRepositoryView)}
+        onPlan={() => new Promise(() => {})}
+        onCommit={() => new Promise(() => {})}
+        onExecute={() => new Promise(() => {})}
+      />,
+      { width: 140, height: 26, useMouse: true },
+    )
+    try {
+      await setup.flush()
+      setup.mockInput.pressKey("f")
+      await Bun.sleep(10)
+      await setup.flush()
+      await setup.mockInput.typeText("worker")
+      await setup.flush()
+      let frame = setup.captureCharFrame()
+      expect(frame).toContain("filtering: worker")
+      expect(frame).toContain("> - worker")
+      expect(frame).not.toContain("> - operator")
+
+      setup.mockInput.pressEscape()
+      await Bun.sleep(100)
+      await setup.flush()
+      frame = setup.captureCharFrame()
+      expect(frame).toContain("p repositories (filtered)")
+
+      setup.mockInput.pressKey("f")
+      await Bun.sleep(10)
+      await setup.flush()
+      for (let index = 0; index < "worker".length; index += 1) setup.mockInput.pressBackspace()
+      setup.mockInput.pressEscape()
+      await Bun.sleep(100)
+      await setup.flush()
+      frame = setup.captureCharFrame()
+      expect(frame).toContain("p repositories (2)")
+      expect(frame).not.toContain("(filtered)")
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  it("runs the command selected by a local filter", async () => {
+    const commandView: GlobalView = {
+      ...view,
+      selected: view.selected === null ? null : {
+        ...view.selected,
+        packages: view.selected.packages.map((pkg) => ({
+          ...pkg,
+          scripts: [
+            ...pkg.scripts,
+            { name: "preview", command: "vite preview", prepared: true, tracked: null },
+          ],
+        })),
+      },
+    }
+    const observed: { script: string | null } = { script: null }
+    const setup = await testRender(
+      <GlobalDashboard
+        initial={commandView}
+        onInspect={() => Promise.resolve(commandView)}
+        onPlan={(intent) => {
+          observed.script = intent.type === "run" ? intent.script : null
+          return Promise.resolve({
+            id: "run-plan",
+            stateRevision: "revision",
+            intent,
+            title: "Run command",
+            effects: ["Run command"],
+            requiresConfirmation: true,
+            dirtySummary: null,
+            dirtyFingerprint: null,
+          })
+        }}
+        onCommit={() => new Promise(() => {})}
+        onExecute={() => new Promise(() => {})}
+      />,
+      { width: 120, height: 26, useMouse: true },
+    )
+    try {
+      await setup.flush()
+      setup.mockInput.pressKey("c")
+      await Bun.sleep(10)
+      await setup.flush()
+      setup.mockInput.pressKey("f")
+      await Bun.sleep(10)
+      await setup.flush()
+      await setup.mockInput.typeText("preview")
+      setup.mockInput.pressEscape()
+      await Bun.sleep(100)
+      await setup.flush()
+      expect(setup.captureCharFrame()).toContain("c packages / commands (filtered)")
+      setup.mockInput.pressKey("r")
+      await Bun.sleep(10)
+      await setup.flush()
+      expect(observed.script).toBe("preview")
     } finally {
       setup.renderer.destroy()
     }

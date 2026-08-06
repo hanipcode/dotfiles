@@ -1,5 +1,5 @@
 import { useKeyboard, useTerminalDimensions } from "@opentui/react"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 import type {
   ActionPlan,
   ActionReceipt,
@@ -42,6 +42,87 @@ type Feedback = {
   readonly kind: "error" | "notice" | "status"
 }
 
+type Pane = "projects" | "sources" | "commands" | "detail"
+type FilterablePane = Exclude<Pane, "detail">
+type PaneFilters = Record<FilterablePane, string>
+
+const paneOrder: ReadonlyArray<Pane> = ["projects", "sources", "commands", "detail"]
+
+interface PaneFrameProps {
+  readonly shortcut: string
+  readonly label: string
+  readonly count?: number
+  readonly focused: boolean
+  readonly filter?: {
+    readonly value: string
+    readonly editing: boolean
+    readonly onInput: (value: string) => void
+    readonly onClose: () => void
+  }
+  readonly children: ReactNode
+}
+
+const PaneFrame = ({ shortcut, label, count, focused, filter, children }: PaneFrameProps) => {
+  const filtered = (filter?.value.trim().length ?? 0) > 0
+  const suffix = filtered ? " (filtered)" : count === undefined ? "" : ` (${count})`
+  const title = `${shortcut} ${label}${suffix}`
+  return (
+    <box style={{ minHeight: 4, flexGrow: 1, position: "relative", overflow: "hidden", backgroundColor: theme.base }}>
+      <box style={{
+        width: "100%",
+        height: "100%",
+        flexDirection: "column",
+        overflow: "hidden",
+        border: true,
+        borderStyle: "rounded",
+        borderColor: focused ? theme.mauve : theme.surface1,
+        backgroundColor: theme.base,
+      }}>
+        <box style={{ minHeight: 1, flexGrow: 1, flexDirection: "column", overflow: "hidden", paddingLeft: 1, paddingRight: 1, backgroundColor: theme.base }}>
+          {children}
+        </box>
+      </box>
+      {filter?.editing === true ? (
+        <box style={{ position: "absolute", top: 0, left: 2, zIndex: 1, width: "85%", height: 1, flexDirection: "row", overflow: "hidden", backgroundColor: theme.base }}>
+          <text wrapMode="none">
+            <span> </span>
+            <span fg={theme.yellow}>f</span>
+            <span fg={theme.text}> filtering: </span>
+          </text>
+          <input
+            focused
+            value={filter.value}
+            onInput={filter.onInput}
+            onSubmit={filter.onClose}
+            keyBindings={[{ name: "escape", action: "submit" }]}
+            placeholder="type to filter"
+            textColor={theme.text}
+            backgroundColor={theme.base}
+            style={{ minWidth: 1, flexGrow: 1 }}
+          />
+          <text> </text>
+        </box>
+      ) : (
+        <box style={{ position: "absolute", top: 0, left: 2, zIndex: 1, width: title.length + 2, maxWidth: "85%", height: 1, overflow: "hidden", backgroundColor: theme.base }}>
+          <text wrapMode="none" truncate>
+            <span> </span>
+            <span fg={focused ? theme.yellow : theme.mauve}>{shortcut}</span>
+            <span fg={focused ? theme.text : theme.subtext0}>{` ${label}${suffix}`}</span>
+            <span> </span>
+          </text>
+        </box>
+      )}
+    </box>
+  )
+}
+
+const HotkeyHint = ({ shortcut, label }: { readonly shortcut: string; readonly label: string }) => (
+  <>
+    <span fg={theme.mauve}>{shortcut}</span>
+    <span fg={theme.overlay0}>{` ${label}  `}</span>
+  </>
+)
+
 const sourceLabel = (view: GlobalView): string => {
   const source = view.selected?.state.source
   if (source === null || source === undefined) return "not prepared"
@@ -64,6 +145,28 @@ const rowsFor = (packages: ReadonlyArray<PackageView>, commands: Readonly<Record
   }
   return rows
 }
+
+const normalizedFilter = (value: string): string => value.trim().toLowerCase()
+
+const includesFilter = (value: string, filter: string): boolean => {
+  const query = normalizedFilter(filter)
+  return query === "" || value.toLowerCase().includes(query)
+}
+
+const filteredRepositories = (repositories: GlobalView["repositories"], filter: string) => repositories.filter((entry) => includesFilter(
+  `${entry.name} ${entry.key} ${entry.repositoryRoot} ${entry.storage} ${entry.daemon} ${entry.problem?.code ?? ""} ${entry.problem?.message ?? ""} ${entry.problem?.path ?? ""}`,
+  filter,
+))
+
+const filteredWorktrees = (worktrees: NonNullable<GlobalView["selected"]>["worktrees"], filter: string) => worktrees.filter((entry) => includesFilter(
+  `${entry.branch ?? "detached"} ${entry.head} ${entry.path} ${entry.locked ?? ""} ${entry.prunable ?? ""}`,
+  filter,
+))
+
+const filteredCommands = (commands: ReadonlyArray<CommandRow>, filter: string) => commands.filter((entry) => includesFilter(
+  `${entry.id} ${entry.script?.command ?? ""} ${entry.record?.status ?? "available"}`,
+  filter,
+))
 
 export const sourceCursorForInspection = (
   current: number,
@@ -110,7 +213,7 @@ export const GlobalDashboard = ({ initial, initialIntent, onInspect, onPlan, onC
   const [projectCursor, setProjectCursor] = useState(initialProjectCursor)
   const [sourceCursor, setSourceCursor] = useState(initialSourceCursor)
   const [commandCursor, setCommandCursor] = useState(initialCommandCursor)
-  const [focus, setFocus] = useState<"projects" | "sources" | "commands">(initialIntent === undefined ? "projects" : "commands")
+  const [focus, setFocus] = useState<Pane>(initialIntent === undefined ? "projects" : "detail")
   const [selectedCommandId, setSelectedCommandId] = useState<string | null>(initialCommandId)
   const [plan, setPlan] = useState<ActionPlan | null>(null)
   const [commitMode, setCommitMode] = useState<"manual" | null>(null)
@@ -120,21 +223,29 @@ export const GlobalDashboard = ({ initial, initialIntent, onInspect, onPlan, onC
   const [search, setSearch] = useState<string | null>(null)
   const [searchCursor, setSearchCursor] = useState(0)
   const [showHelp, setShowHelp] = useState(false)
+  const [filters, setFilters] = useState<PaneFilters>({ projects: "", sources: "", commands: "" })
+  const [filtering, setFiltering] = useState<FilterablePane | null>(null)
   const initialStarted = useRef(false)
   const requestGeneration = useRef(0)
   const message = feedback?.text ?? null
 
   const selectedRepository = view.repositories.find((entry) => entry.repoId === repositoryId) ?? view.repositories[0]
   const worktrees = view.selected?.worktrees ?? []
-  const selectedWorktree = worktrees[Math.min(sourceCursor, Math.max(0, worktrees.length - 1))]
+  const visibleRepositories = filteredRepositories(view.repositories, filters.projects)
+  const visibleWorktrees = filteredWorktrees(worktrees, filters.sources)
+  const selectedWorktree = visibleWorktrees[Math.min(sourceCursor, Math.max(0, visibleWorktrees.length - 1))]
   const inspectedWorktree = worktrees.find((entry) => entry.path === view.selected?.selectedWorktreePath)
   const commands = rowsFor(view.selected?.packages ?? [], view.selected?.state.commands ?? {})
-  const selectedRow = commands[Math.min(commandCursor, Math.max(0, commands.length - 1))]
+  const visibleCommands = filteredCommands(commands, filters.commands)
+  const selectedRow = visibleCommands[Math.min(commandCursor, Math.max(0, visibleCommands.length - 1))]
   const selectedRecord = selectedCommandId === null
     ? selectedRow?.record ?? null
     : view.selected?.state.commands[selectedCommandId] ?? selectedRow?.record ?? null
   const narrow = terminal.width < 88
   const wide = terminal.width >= 126
+  const stackVisible = view.selected?.state.source?.kind === "stack"
+    && view.selected.state.source.stack !== null
+    && includesFilter(`stack ${sourceLabel(view)}`, filters.sources)
   const searchValue = search?.trim().toLowerCase() ?? ""
   const searchResults: ReadonlyArray<SearchResult> = [
     ...view.repositories.map((entry): SearchResult => ({
@@ -161,21 +272,29 @@ export const GlobalDashboard = ({ initial, initialIntent, onInspect, onPlan, onC
     setView(next)
     const nextRepositoryId = query.repositoryId ?? next.selected?.state.repoId ?? next.repositories[0]?.repoId ?? null
     if (!preserveCursors) setRepositoryId(nextRepositoryId)
-    if (!preserveCursors && nextRepositoryId !== null) {
-      const nextProjectCursor = next.repositories.findIndex((entry) => entry.repoId === nextRepositoryId)
-      if (nextProjectCursor >= 0) setProjectCursor(nextProjectCursor)
+    const nextRepositories = filteredRepositories(next.repositories, filters.projects)
+    const highlightedRepositoryId = preserveCursors
+      ? visibleRepositories[Math.min(projectCursor, Math.max(0, visibleRepositories.length - 1))]?.repoId
+      : nextRepositoryId
+    if (highlightedRepositoryId !== null && highlightedRepositoryId !== undefined) {
+      const nextProjectCursor = nextRepositories.findIndex((entry) => entry.repoId === highlightedRepositoryId)
+      setProjectCursor(Math.max(0, nextProjectCursor))
     }
-    const nextWorktreePath = query.worktreePath ?? next.selected?.selectedWorktreePath
-    setSourceCursor((current) => sourceCursorForInspection(
-      current,
-      next.selected?.worktrees ?? [],
-      nextWorktreePath,
-      preserveCursors,
-    ))
+    const nextWorktrees = filteredWorktrees(next.selected?.worktrees ?? [], filters.sources)
+    const highlightedWorktreePath = preserveCursors
+      ? selectedWorktree?.path
+      : query.worktreePath ?? next.selected?.selectedWorktreePath
+    if (highlightedWorktreePath !== null && highlightedWorktreePath !== undefined) {
+      const nextSourceCursor = nextWorktrees.findIndex((entry) => entry.path === highlightedWorktreePath)
+      setSourceCursor(Math.max(0, nextSourceCursor))
+    }
+    const nextRows = filteredCommands(rowsFor(next.selected?.packages ?? [], next.selected?.state.commands ?? {}), filters.commands)
+    const highlightedCommandId = preserveCursors ? selectedRow?.id : query.commandId
+    if (highlightedCommandId !== undefined) {
+      const nextCommandCursor = nextRows.findIndex((entry) => entry.id === highlightedCommandId)
+      setCommandCursor(Math.max(0, nextCommandCursor))
+    }
     if (!preserveCursors && query.commandId !== undefined) {
-      const nextRows = rowsFor(next.selected?.packages ?? [], next.selected?.state.commands ?? {})
-      const nextCommandCursor = nextRows.findIndex((entry) => entry.id === query.commandId)
-      if (nextCommandCursor >= 0) setCommandCursor(nextCommandCursor)
       setSelectedCommandId(query.commandId)
     }
   }
@@ -236,19 +355,46 @@ export const GlobalDashboard = ({ initial, initialIntent, onInspect, onPlan, onC
   }
 
   const switchSelected = () => {
-    if (selectedRepository === undefined || inspectedWorktree === undefined) return
-    requestPlan({
-      type: "switch",
-      repoId: selectedRepository.repoId,
-      worktreePath: inspectedWorktree.path,
-      expectedHead: inspectedWorktree.head,
-      packagePath: selectedRow?.packagePath ?? view.selected?.packages[0]?.path ?? "",
+    if (selectedRepository === undefined || selectedWorktree === undefined) return
+    const planFor = (next: GlobalView, targetPath: string) => {
+      const target = next.selected?.worktrees.find((entry) => entry.path === targetPath)
+      const packagePath = next.selected?.packages[0]?.path
+      if (target === undefined || packagePath === undefined) {
+        setFeedback({ text: "Selected worktree has no discoverable package scripts.", kind: "error" })
+        setBusy(false)
+        return
+      }
+      requestPlan({
+        type: "switch",
+        repoId: selectedRepository.repoId,
+        worktreePath: target.path,
+        expectedHead: target.head,
+        packagePath,
+      })
+    }
+    if (selectedWorktree.path === view.selected?.selectedWorktreePath) {
+      planFor(view, selectedWorktree.path)
+      return
+    }
+    const generation = ++requestGeneration.current
+    setBusy(true)
+    setFeedback({ text: "Inspecting selected worktree...", kind: "status" })
+    const query = { repositoryId: selectedRepository.repoId, worktreePath: selectedWorktree.path }
+    void onInspect(query).then((next) => {
+      if (generation !== requestGeneration.current) return
+      applyInspection(next, query)
+      planFor(next, selectedWorktree.path)
+    }).catch((cause) => {
+      if (generation === requestGeneration.current) setFeedback({ text: String(cause), kind: "error" })
+    }).finally(() => {
+      if (generation === requestGeneration.current) setBusy(false)
     })
   }
 
   const commandAction = (type: "stop" | "restart") => {
-    if (selectedRepository === undefined || selectedRecord === null) return
-    requestPlan({ type, repoId: selectedRepository.repoId, commandId: selectedRecord.id })
+    const record = focus === "commands" ? selectedRow?.record ?? null : selectedRecord
+    if (selectedRepository === undefined || record === null) return
+    requestPlan({ type, repoId: selectedRepository.repoId, commandId: record.id })
   }
 
   const executePlan = () => {
@@ -294,11 +440,32 @@ export const GlobalDashboard = ({ initial, initialIntent, onInspect, onPlan, onC
     }).catch((cause) => setFeedback({ text: String(cause), kind: "error" })).finally(() => setBusy(false))
   }
 
+  const updateFilter = (pane: FilterablePane, value: string) => {
+    if (pane === "projects") {
+      const currentId = visibleRepositories[Math.min(projectCursor, Math.max(0, visibleRepositories.length - 1))]?.repoId
+      const nextRows = filteredRepositories(view.repositories, value)
+      const nextIndex = currentId === undefined ? -1 : nextRows.findIndex((entry) => entry.repoId === currentId)
+      setProjectCursor(Math.max(0, nextIndex))
+    } else if (pane === "sources") {
+      const currentPath = selectedWorktree?.path
+      const nextRows = filteredWorktrees(worktrees, value)
+      const nextIndex = currentPath === undefined ? -1 : nextRows.findIndex((entry) => entry.path === currentPath)
+      setSourceCursor(Math.max(0, nextIndex))
+    } else {
+      const currentId = selectedRow?.id
+      const nextRows = filteredCommands(commands, value)
+      const nextIndex = currentId === undefined ? -1 : nextRows.findIndex((entry) => entry.id === currentId)
+      setCommandCursor(Math.max(0, nextIndex))
+      setSelectedCommandId(null)
+    }
+    setFilters((current) => ({ ...current, [pane]: value }))
+  }
+
   const move = (delta: number) => {
-    if (focus === "projects") setProjectCursor((current) => Math.max(0, Math.min(view.repositories.length - 1, current + delta)))
-    if (focus === "sources") setSourceCursor((current) => Math.max(0, Math.min(worktrees.length - 1, current + delta)))
+    if (focus === "projects") setProjectCursor((current) => Math.max(0, Math.min(visibleRepositories.length - 1, current + delta)))
+    if (focus === "sources") setSourceCursor((current) => Math.max(0, Math.min(visibleWorktrees.length - 1, current + delta)))
     if (focus === "commands") {
-      setCommandCursor((current) => Math.max(0, Math.min(commands.length - 1, current + delta)))
+      setCommandCursor((current) => Math.max(0, Math.min(visibleCommands.length - 1, current + delta)))
       setSelectedCommandId(null)
     }
   }
@@ -340,6 +507,10 @@ export const GlobalDashboard = ({ initial, initialIntent, onInspect, onPlan, onC
       if (plan.dirtySummary === null && key.name === "return" && !busy) executePlan()
       return
     }
+    if (filtering !== null) {
+      if (key.name === "escape") setFiltering(null)
+      return
+    }
     if (key.name === "q" || (key.ctrl && key.name === "c")) return exit()
     if (key.name === "/" || (key.ctrl && key.name === "p")) {
       setSearch("")
@@ -350,15 +521,39 @@ export const GlobalDashboard = ({ initial, initialIntent, onInspect, onPlan, onC
       setShowHelp(true)
       return
     }
+    if (key.name === "f" && focus !== "detail") {
+      setFiltering(focus)
+      return
+    }
+    if (key.name === "p") {
+      setFocus("projects")
+      return
+    }
+    if (key.name === "w") {
+      setFocus("sources")
+      return
+    }
+    if (key.name === "c") {
+      setFocus("commands")
+      return
+    }
+    if (key.name === "o") {
+      setFocus("detail")
+      return
+    }
     if (key.name === "tab") {
-      setFocus((current) => current === "projects" ? "sources" : current === "sources" ? "commands" : "projects")
+      setFocus((current) => {
+        const currentIndex = paneOrder.indexOf(current)
+        const delta = key.shift ? -1 : 1
+        return paneOrder[(currentIndex + delta + paneOrder.length) % paneOrder.length] ?? "projects"
+      })
       return
     }
     if (key.name === "j" || key.name === "down") return move(1)
     if (key.name === "k" || key.name === "up") return move(-1)
     if (key.name === "return") {
       if (focus === "projects") {
-        const repository = view.repositories[Math.min(projectCursor, Math.max(0, view.repositories.length - 1))]
+        const repository = visibleRepositories[Math.min(projectCursor, Math.max(0, visibleRepositories.length - 1))]
         if (repository !== undefined && repository.problem === null) {
           setRepositoryId(repository.repoId)
           setSourceCursor(0)
@@ -380,23 +575,32 @@ export const GlobalDashboard = ({ initial, initialIntent, onInspect, onPlan, onC
       }
       return
     }
-    if (key.name === "r" && key.shift) commandAction("restart")
-    else if (key.name === "r") runSelected()
-    if (key.name === "x") switchSelected()
-    if (key.name === "s") commandAction("stop")
+    if (key.name === "r" && key.shift && (focus === "commands" || focus === "detail")) commandAction("restart")
+    else if (key.name === "r" && focus === "commands") runSelected()
+    if (key.name === "x" && focus === "sources") switchSelected()
+    if (key.name === "s" && (focus === "commands" || focus === "detail")) commandAction("stop")
     if (key.name === "escape") setSelectedCommandId(null)
   })
 
   if (plan !== null) {
+    const modalHeight = Math.max(1, terminal.height - 2)
+    const dirtyHeight = plan.dirtySummary === null
+      ? 0
+      : Math.min(
+        Math.max(4, modalHeight - plan.effects.length - 9),
+        Math.max(4, plan.dirtySummary.split("\n").length + 3),
+      )
     return (
       <box style={{ width: "100%", height: "100%", alignItems: "center", justifyContent: "center", backgroundColor: theme.base }}>
-        <box title={` ${plan.title} `} style={{ width: Math.min(78, terminal.width - 4), height: Math.min(terminal.height - 2, Math.max(9, plan.effects.length + (plan.dirtySummary === null ? 7 : 14))), flexDirection: "column", border: true, borderStyle: "rounded", borderColor: theme.mauve, padding: 1 }}>
+        <box title={` ${plan.title} `} style={{ width: Math.min(78, terminal.width - 4), height: modalHeight, flexDirection: "column", border: true, borderStyle: "rounded", borderColor: theme.mauve, padding: 1 }}>
           <text style={{ fg: theme.text }}>Planned effects</text>
           <text style={{ fg: theme.overlay0 }}> </text>
           {plan.effects.map((effect, index) => <text key={`${index}:${effect}`} style={{ fg: theme.subtext0 }}>{`${index + 1}. ${effect}`}</text>)}
           {plan.dirtySummary === null ? null : (
-            <box title=" uncommitted changes " style={{ flexDirection: "column", border: true, borderColor: theme.yellow, paddingLeft: 1, paddingRight: 1 }}>
-              <text wrapMode="char" style={{ fg: theme.yellow }}>{plan.dirtySummary}</text>
+            <box title=" uncommitted changes " style={{ height: dirtyHeight, flexShrink: 0, flexDirection: "column", overflow: "hidden", border: true, borderColor: theme.yellow, paddingLeft: 1, paddingRight: 1 }}>
+              <scrollbox scrollY style={{ minHeight: 1, flexGrow: 1 }}>
+                <text wrapMode="char" style={{ fg: theme.yellow }}>{plan.dirtySummary}</text>
+              </scrollbox>
               {commitMode === "manual" ? (
                 <input
                   focused
@@ -407,7 +611,13 @@ export const GlobalDashboard = ({ initial, initialIntent, onInspect, onPlan, onC
                   textColor={theme.text}
                   backgroundColor={theme.surface0}
                 />
-              ) : <text style={{ fg: theme.overlay1 }}>c manual message   a Luna message   esc cancel</text>}
+              ) : (
+                <text style={{ height: 1, flexShrink: 0 }}>
+                  <HotkeyHint shortcut="c" label="manual message" />
+                  <HotkeyHint shortcut="a" label="Luna message" />
+                  <HotkeyHint shortcut="esc" label="cancel" />
+                </text>
+              )}
             </box>
           )}
           <text style={{ fg: theme.overlay0 }}> </text>
@@ -422,9 +632,14 @@ export const GlobalDashboard = ({ initial, initialIntent, onInspect, onPlan, onC
     return (
       <box style={{ width: "100%", height: "100%", alignItems: "center", justifyContent: "center", backgroundColor: theme.base }}>
         <box title=" runbox keys " style={{ width: Math.min(72, terminal.width - 4), height: Math.min(18, terminal.height - 2), flexDirection: "column", border: true, borderStyle: "rounded", borderColor: theme.blue, padding: 1 }}>
-          <text style={{ fg: theme.text }}>tab             next pane</text>
+          <text><HotkeyHint shortcut="p" label="repositories" /></text>
+          <text><HotkeyHint shortcut="w" label="worktrees" /></text>
+          <text><HotkeyHint shortcut="c" label="commands" /></text>
+          <text><HotkeyHint shortcut="o" label="retained output" /></text>
+          <text style={{ fg: theme.text }}>tab / shift-tab cycle panes</text>
           <text style={{ fg: theme.text }}>j/k or arrows   move selection</text>
           <text style={{ fg: theme.text }}>enter           inspect selection</text>
+          <text style={{ fg: theme.text }}>f               filter focused pane</text>
           <text style={{ fg: theme.text }}>/ or ctrl+p     search everything visible</text>
           <text style={{ fg: theme.text }}>r               review run</text>
           <text style={{ fg: theme.text }}>x               review source switch</text>
@@ -455,9 +670,16 @@ export const GlobalDashboard = ({ initial, initialIntent, onInspect, onPlan, onC
   }
 
   const projectPane = (
-    <box title=" repositories " style={{ flexDirection: "column", border: true, borderStyle: "rounded", borderColor: focus === "projects" ? theme.mauve : theme.surface1, paddingLeft: 1, paddingRight: 1, flexGrow: 1, overflow: "hidden" }}>
+    <PaneFrame
+      shortcut="p"
+      label="repositories"
+      count={visibleRepositories.length}
+      focused={focus === "projects"}
+      filter={{ value: filters.projects, editing: filtering === "projects", onInput: (value) => updateFilter("projects", value), onClose: () => setFiltering(null) }}
+    >
       {view.repositories.length === 0 ? <text style={{ fg: theme.overlay0 }}>no initialized repositories</text> : null}
-      {view.repositories.map((repository, index) => {
+      {view.repositories.length > 0 && visibleRepositories.length === 0 ? <text style={{ fg: theme.overlay0 }}>no matching repositories</text> : null}
+      {visibleRepositories.map((repository, index) => {
         const selected = index === projectCursor
         const marker = repository.problem !== null ? "!" : repository.activeCommandCount > 0 ? "*" : "-"
         return (
@@ -466,15 +688,22 @@ export const GlobalDashboard = ({ initial, initialIntent, onInspect, onPlan, onC
           </text>
         )
       })}
-    </box>
+    </PaneFrame>
   )
 
   const sourcePane = (
-    <box title=" execution sources " style={{ flexDirection: "column", border: true, borderStyle: "rounded", borderColor: focus === "sources" ? theme.mauve : theme.surface1, paddingLeft: 1, paddingRight: 1, flexGrow: 1, overflow: "hidden" }}>
-      {view.selected?.state.source?.kind === "stack" && view.selected.state.source.stack !== null
+    <PaneFrame
+      shortcut="w"
+      label="sources"
+      count={visibleWorktrees.length + (stackVisible ? 1 : 0)}
+      focused={focus === "sources"}
+      filter={{ value: filters.sources, editing: filtering === "sources", onInput: (value) => updateFilter("sources", value), onClose: () => setFiltering(null) }}
+    >
+      {stackVisible
         ? <text wrapMode="none" truncate style={{ fg: theme.blue }}>{`S stack ${sourceLabel(view)} [display]`}</text>
         : null}
-      {worktrees.map((worktree, index) => {
+      {worktrees.length > 0 && visibleWorktrees.length === 0 && !stackVisible ? <text style={{ fg: theme.overlay0 }}>no matching sources</text> : null}
+      {visibleWorktrees.map((worktree, index) => {
         const selected = index === sourceCursor
         const activeCommit = worktree.isActiveSource && view.selected?.state.source?.kind === "worktree"
           ? view.selected.state.source.commit
@@ -494,69 +723,86 @@ export const GlobalDashboard = ({ initial, initialIntent, onInspect, onPlan, onC
           </box>
         )
       })}
-    </box>
+    </PaneFrame>
   )
 
   const commandPane = (
-    <box title=" packages / commands " style={{ flexDirection: "column", border: true, borderStyle: "rounded", borderColor: focus === "commands" ? theme.mauve : theme.surface1, paddingLeft: 1, paddingRight: 1, flexGrow: 1, overflow: "hidden" }}>
+    <PaneFrame
+      shortcut="c"
+      label="packages / commands"
+      count={visibleCommands.length}
+      focused={focus === "commands"}
+      filter={{ value: filters.commands, editing: filtering === "commands", onInput: (value) => updateFilter("commands", value), onClose: () => setFiltering(null) }}
+    >
       {commands.length === 0 ? <text style={{ fg: theme.overlay0 }}>no package scripts in selected worktree</text> : null}
-      {commands.map((row, index) => {
+      {commands.length > 0 && visibleCommands.length === 0 ? <text style={{ fg: theme.overlay0 }}>no matching commands</text> : null}
+      {visibleCommands.map((row, index) => {
         const selected = index === commandCursor
         const status = row.record?.status ?? (row.script?.prepared === true ? "ready" : null)
         return (
           <CommandListRow key={row.id} label={row.id} selected={selected} status={status} />
         )
       })}
-    </box>
+    </PaneFrame>
   )
 
   const detailPane = (
-    <box title=" detail / retained output " style={{ flexDirection: "column", border: true, borderStyle: "rounded", borderColor: theme.surface1, paddingLeft: 1, paddingRight: 1, flexGrow: 1, overflow: "hidden" }}>
+    <PaneFrame shortcut="o" label="retained output" focused={focus === "detail"}>
       <text wrapMode="none" truncate style={{ fg: theme.mauve }}>{selectedRow?.id ?? selectedRepository?.name ?? "select a repository"}</text>
       <text wrapMode="none" truncate style={{ fg: theme.subtext0 }}>{`active  ${sourceLabel(view)}`}</text>
       <text wrapMode="none" truncate style={{ fg: theme.subtext0 }}>{`env     ${selectedRepository?.environmentSourceRoot ?? "not configured"}`}</text>
-        <text wrapMode="none" truncate style={{ fg: theme.subtext0 }}>{`storage ${selectedRepository?.storage ?? "-"}  daemon ${selectedRepository?.daemon ?? "-"}  setup ${view.selected?.preparation.setup ?? "-"}`}</text>
+      <text wrapMode="none" truncate style={{ fg: theme.subtext0 }}>{`storage ${selectedRepository?.storage ?? "-"}  daemon ${selectedRepository?.daemon ?? "-"}  setup ${view.selected?.preparation.setup ?? "-"}`}</text>
       {selectedRecord === null ? (
         <text style={{ fg: theme.overlay1 }}>{selectedRow?.script?.command ?? "enter a command to inspect retained output"}</text>
       ) : (
         <>
           <text wrapMode="none" truncate style={{ fg: commandStatusColor(selectedRecord.status) }}>{`${selectedRecord.status}  pid ${selectedRecord.pid ?? "-"}  cpu ${view.selected?.selectedMetrics?.cpuPercent.toFixed(1) ?? "0.0"}%`}</text>
           <text wrapMode="none" truncate style={{ fg: theme.subtext0 }}>{`memory ${bytes(view.selected?.selectedMetrics?.memoryBytes ?? 0)}  processes ${view.selected?.selectedMetrics?.processCount ?? 0}  uptime ${duration(view.selected?.selectedMetrics?.uptimeSeconds ?? 0)}`}</text>
-          <scrollbox id="global-dashboard-logs" focused={focus === "commands"} stickyScroll stickyStart="bottom" scrollY style={{ flexGrow: 1 }}>
+          <scrollbox id="global-dashboard-logs" focused={focus === "detail"} stickyScroll stickyStart="bottom" scrollY style={{ flexGrow: 1 }}>
             <text wrapMode="char" style={{ fg: theme.text }}>{formatLogOutput(view.selected?.selectedLog ?? "") || selectedRecord.message || "waiting for output..."}</text>
           </scrollbox>
         </>
       )}
       {(view.selected?.problems ?? []).map((entry) => <text key={`${entry.code}:${entry.path}`} wrapMode="none" truncate style={{ fg: theme.red }}>{`${entry.code}: ${entry.message}`}</text>)}
-    </box>
+    </PaneFrame>
   )
 
   return (
     <box style={{ width: "100%", height: "100%", flexDirection: "column", overflow: "hidden", backgroundColor: theme.base }}>
-      <box style={{ height: 2, flexShrink: 0, flexDirection: "column", backgroundColor: theme.base }}>
-        <box style={{ height: 1, flexShrink: 0, paddingLeft: 1, paddingRight: 1, overflow: "hidden", backgroundColor: theme.base }}>
-          <text wrapMode="none" truncate style={{ minWidth: 0, flexGrow: 1, fg: theme.mauve }}>{`runbox  GLOBAL   ${view.repositories.length} repositories   ${view.repositories.reduce((sum, entry) => sum + entry.activeCommandCount, 0)} active`}</text>
-        </box>
+      <box style={{ height: 1, flexShrink: 0, flexDirection: "column", backgroundColor: theme.base }}>
         <box style={{ height: 1, flexShrink: 0, paddingLeft: 1, paddingRight: 1, overflow: "hidden", backgroundColor: theme.base }}>
           <text wrapMode="none" truncate style={{ minWidth: 0, flexGrow: 1, fg: theme.overlay1 }}>{selectedRepository === undefined ? "No initialized repositories. Run 'runbox init' inside a Git repository." : `${selectedRepository.key}  ${busy ? "refreshing..." : sourceLabel(view)}`}</text>
         </box>
       </box>
       {narrow ? (
-        <box style={{ flexGrow: 1, overflow: "hidden" }}>
-          {focus === "projects" ? projectPane : focus === "sources" ? sourcePane : commandPane}
+        <box style={{ flexGrow: 1, overflow: "hidden", paddingLeft: 1, paddingRight: 1, backgroundColor: theme.base }}>
+          {focus === "projects" ? projectPane : focus === "sources" ? sourcePane : focus === "commands" ? commandPane : detailPane}
         </box>
       ) : (
-        <box style={{ flexGrow: 1, flexDirection: "row", overflow: "hidden" }}>
-          <box style={{ width: wide ? 34 : 28, flexShrink: 0, flexDirection: "column" }}>{projectPane}{sourcePane}</box>
-          <box style={wide ? { width: 54, flexGrow: 0 } : { flexGrow: 1 }}>{commandPane}</box>
+        <box style={{ flexGrow: 1, flexDirection: "row", gap: 1, overflow: "hidden", paddingLeft: 1, paddingRight: 1, backgroundColor: theme.base }}>
+          <box style={{ width: wide ? 34 : 28, minHeight: 9, flexShrink: 0, flexDirection: "column", gap: 1, backgroundColor: theme.base }}>{projectPane}{sourcePane}</box>
+          <box style={wide ? { width: 54, flexGrow: 0 } : { minWidth: 0, flexGrow: 1 }}>{wide || focus !== "detail" ? commandPane : detailPane}</box>
           {wide ? <box style={{ flexGrow: 1 }}>{detailPane}</box> : null}
         </box>
       )}
-      {narrow && selectedCommandId !== null ? <box style={{ height: Math.max(6, Math.floor(terminal.height / 3)) }}>{detailPane}</box> : null}
-      <box style={{ height: 1, flexShrink: 0, overflow: "hidden", backgroundColor: theme.base }}>
-        <text wrapMode="none" truncate style={{ minWidth: 0, flexGrow: 1, fg: feedback?.kind === "error" ? theme.red : message === null ? theme.overlay0 : theme.peach }}>
-          {message ?? "tab pane  j/k move  enter inspect  / search  ? help  r run  x switch  s stop  R restart  q detach"}
-        </text>
+      <box style={{ height: 1, flexShrink: 0, overflow: "hidden", paddingLeft: 1, paddingRight: 1, backgroundColor: theme.base }}>
+        {message === null ? (
+          <text wrapMode="none" truncate style={{ minWidth: 0, flexGrow: 1 }}>
+            <HotkeyHint shortcut="p" label="repos" />
+            <HotkeyHint shortcut="w" label="sources" />
+            <HotkeyHint shortcut="c" label="commands" />
+            <HotkeyHint shortcut="o" label="output" />
+            {focus === "sources" ? <HotkeyHint shortcut="x" label="switch" /> : null}
+            {focus === "commands" ? <HotkeyHint shortcut="r" label="run" /> : null}
+            {focus === "commands" || focus === "detail" ? <HotkeyHint shortcut="s/R" label="stop/restart" /> : null}
+            {focus !== "detail" ? <HotkeyHint shortcut="f" label="filter" /> : null}
+            <HotkeyHint shortcut="/" label="search" />
+            <HotkeyHint shortcut="?" label="help" />
+            <HotkeyHint shortcut="q" label="detach" />
+          </text>
+        ) : (
+          <text wrapMode="none" truncate style={{ minWidth: 0, flexGrow: 1, fg: feedback?.kind === "error" ? theme.red : theme.peach }}>{message}</text>
+        )}
       </box>
     </box>
   )

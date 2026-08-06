@@ -78,10 +78,18 @@ export interface WorkspaceInfo {
 export interface HerdrClient {
   /** Runs `herdr <args>` and returns the unwrapped `result` payload. */
   readonly run: <A>(args: ReadonlyArray<string>) => Effect.Effect<A, HerdrError | HerdrSpawnError>
-  readonly worktreeList: () => Effect.Effect<WorktreeList, HerdrError | HerdrSpawnError>
+  readonly worktreeList: (
+    options?:
+      | { readonly cwd: string; readonly workspaceId?: never }
+      | { readonly workspaceId: string; readonly cwd?: never },
+  ) => Effect.Effect<WorktreeList, HerdrError | HerdrSpawnError>
   readonly worktreeOpen: (
     target: { readonly branch: string } | { readonly path: string },
-    options?: { readonly label?: string; readonly focus?: boolean },
+    options?: { readonly cwd?: string; readonly label?: string; readonly focus?: boolean },
+  ) => Effect.Effect<unknown, HerdrError | HerdrSpawnError>
+  readonly worktreeCreate: (
+    branch: string,
+    options?: { readonly cwd?: string; readonly focus?: boolean },
   ) => Effect.Effect<unknown, HerdrError | HerdrSpawnError>
   readonly worktreeRemove: (
     workspaceId: string,
@@ -162,12 +170,24 @@ const make = (): HerdrClient => {
 
   return {
     run,
-    worktreeList: () => run<WorktreeList>(["worktree", "list"]),
+    worktreeList: (options) => {
+      const args = ["worktree", "list"]
+      if (options?.cwd !== undefined) args.push("--cwd", options.cwd)
+      if (options?.workspaceId !== undefined) args.push("--workspace", options.workspaceId)
+      return run<WorktreeList>(args)
+    },
     worktreeOpen: (target, options) => {
       const args = ["worktree", "open"]
+      if (options?.cwd !== undefined) args.push("--cwd", options.cwd)
       if ("branch" in target) args.push("--branch", target.branch)
       else args.push("--path", target.path)
       if (options?.label) args.push("--label", options.label)
+      args.push(options?.focus === false ? "--no-focus" : "--focus")
+      return run(args)
+    },
+    worktreeCreate: (branch, options) => {
+      const args = ["worktree", "create", "--branch", branch]
+      if (options?.cwd !== undefined) args.push("--cwd", options.cwd)
       args.push(options?.focus === false ? "--no-focus" : "--focus")
       return run(args)
     },
