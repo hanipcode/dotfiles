@@ -41,7 +41,9 @@ const handler = Effect.gen(function* () {
 
   if (chosen === undefined) return
   const row = chosen.row
-  if (chosen.type === "create") {
+  if (chosen.type === "switch") {
+    yield* ghStack.checkoutBranch(initial.currentWorktreePath, row.branch)
+  } else if (chosen.type === "create") {
     yield* herdr.worktreeCreate(row.branch, { cwd: initial.repoRoot, focus: true })
   } else if (row.worktree?.open_workspace_id !== undefined) {
     yield* herdr.workspaceFocus(row.worktree.open_workspace_id)

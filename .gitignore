@@ -82,6 +82,9 @@ heherdr/node_modules/
 # --- runbox (personal CLI source, globally linked by Bun) ---------------------
 runbox/node_modules/
 
+# --- hanif-agent (personal agent workflow CLI, globally linked by Bun) --------
+hanif-agent/node_modules/
+
 # --- machine-local escape hatch -----------------------------------------------
 # Anything you need on this machine only. Sourced by .zshrc if present.
 home/.config/zsh/local.zsh

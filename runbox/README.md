@@ -7,6 +7,9 @@ switches the runner to a committed agent branch on demand.
 ```sh
 runbox init
 runbox dev
+runbox dev -w
+runbox sync
+runbox forward pnpm install
 runbox switch
 runbox stack dev
 runbox stop dev
@@ -39,6 +42,63 @@ the `packageManager` field and lockfiles. A command can receive additional argum
 
 ```sh
 runbox dev -- --host 0.0.0.0
+```
+
+Use `forward` for a synchronous one-off command that is not a package script:
+
+```sh
+runbox forward pnpm install
+runbox forward -- pnpm test --filter operator
+runbox forward -- env CI=1 pnpm test --run
+```
+
+Forwarding requires the complete command. Runbox does not insert a package manager
+or evaluate shell syntax. Use an explicit shell only when pipes or redirection are
+intentional. The command runs in the nearest package directory, receives the same
+environment chain as package scripts, streams output in place, and exits with the
+child's status. It is request-scoped and never becomes a tracked dashboard command.
+Runbox still switches to the invoking worktree's committed HEAD and restarts active
+commands before executing it.
+
+Forward output is retained in a bounded shared artifact. Each invocation records a
+correlation ID, exact argv, working directory, source commit, output, duration, and
+exit status:
+
+```sh
+runbox logs forward --json
+runbox logs my-project forward --json
+```
+
+Use `sync` to apply the invoking worktree's current tracked changes, deletions, and
+non-ignored untracked files to the managed runner without committing:
+
+```sh
+runbox sync
+runbox sync --json
+runbox dev -w
+runbox dev -w -- --host 0.0.0.0
+```
+
+`-w`/`--watch` performs an initial sync and keeps one repository watcher in the
+daemon. The watcher only invalidates; each pass reconciles from Git's complete dirty
+set. Existing dev processes stay alive across source-worktree moves so their own
+watch/HMR behavior handles the changed files. Moving from worktree A to B closes A's
+watcher before checking out B, cleans A's tracked and non-ignored untracked overlay,
+applies B's overlay, and ignores stale A events.
+
+Ignored dependencies, caches, generated output, and ignored `.env*` files are not
+source-synced. Canonical environment synchronization remains separate. A removed or
+newly ignored untracked source path is removed only when Runbox's sync journal owns
+the runner destination. Conflicting unowned runner files fail with
+`SYNC_DESTINATION_CONFLICT` rather than being overwritten.
+
+Multiple `-w` commands share one watcher. Stopping the last watched command closes
+the subscription and all debounce, retry, and HEAD-poll timers. TUI/CLI detachment
+does not stop it. Read bounded synchronization evidence with:
+
+```sh
+runbox logs sync --json
+runbox logs my-project sync --json
 ```
 
 In a monorepo, invoke runbox from the package whose script you want. For example,
@@ -152,6 +212,9 @@ Automation should use the noninteractive interface and trust its exit status:
 runbox switch --no-tui --json
 runbox switch --no-tui --json --commit-message "fix: repair checkout"
 runbox stack --no-tui --json dev
+runbox dev -w --no-tui --json
+runbox sync --json
+runbox forward --no-tui --json -- pnpm install --frozen-lockfile
 runbox status --json
 runbox commands --json
 runbox projects --json
@@ -169,6 +232,20 @@ JSON is a stable envelope. Successful commands return:
   "data": {}
 }
 ```
+
+`forward --json` returns one object after the child exits. Its `data` includes the
+invocation ID, exact argv, resolved runner directory, source commit, `started`, exit code,
+signal, duration, bounded stdout and stderr tails, truncation flags, warnings, and
+the retained log path. A child failure uses `FORWARDED_COMMAND_FAILED`; interruption
+uses `FORWARD_INTERRUPTED`. If transport fails after startup, inspect
+`runbox logs forward --json` before retrying because the command may have produced
+side effects.
+
+`sync --json` reports the activated source, overlay revision, copied/removed counts,
+tracked/untracked counts, and whether setup inputs changed. `status --json` includes
+the watch mode and phase. On `SYNC_ROLLBACK_FAILED`, commands are stopped because
+neither source could be restored safely; inspect `runbox logs sync --json` before
+retrying.
 
 Failures exit non-zero and include a stable code plus the next action:
 
@@ -203,7 +280,8 @@ source, active source, all
 tracked commands, and commands whose process is currently alive. `logs` accepts the
 project name, repo ID, or stable key. A command can be a unique script name or its
 full monorepo ID such as `apps/web:dev`. Use `setup` as the command to retrieve Luna's
-setup transcript. `--lines` limits returned output and defaults to 200 lines.
+setup transcript, `forward` for one-off command output, or `sync` for source-mirror
+activity. `--lines` limits returned output and defaults to 200 lines.
 
 `commands --json` lists scripts from the nearest `package.json`, their detected
 package manager, and whether each has a runbox preparation instruction. `doctor` is
@@ -232,11 +310,15 @@ Direct commands such as `runbox dev` open the same global dashboard focused on t
 command while activation proceeds. Active gh-stack provenance is displayed as a source;
 use `runbox stack <command>` to select and activate a stack.
 
+On desktop-sized terminals, repositories, sources, and commands with active status share
+the top row. Each list has selection-aware scrolling and a scrollbar when its contents
+overflow. The selected command's scrollable logs span the full row below them.
+
 ```text
 p                    focus repositories
 w                    focus sources/worktrees
-c                    focus packages and commands
-o                    focus retained output
+c                    focus commands and active status
+o                    focus logs
 tab / shift+tab      cycle panes forward or backward
 j/k or arrows        move within the focused pane
 enter                inspect the selected repository, source, or command

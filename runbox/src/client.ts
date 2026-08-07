@@ -3,9 +3,18 @@ import { access, appendFile, mkdir, open } from "node:fs/promises"
 import { dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 import { spawn } from "node:child_process"
-import type { DaemonRequest, DaemonResponse, ProjectContext, RepoState, SourceRef } from "./domain.ts"
+import {
+  RUNBOX_PROTOCOL_VERSION,
+  type DaemonRequest,
+  type DaemonResponse,
+  type ForwardResult,
+  type ForwardStart,
+  type ProjectContext,
+  type RepoState,
+  type SourceRef,
+} from "./domain.ts"
 import { RunboxError } from "./errors.ts"
-import { request } from "./ipc.ts"
+import { request, requestForward } from "./ipc.ts"
 import { Git } from "./services/Git.ts"
 import { Paths } from "./services/Paths.ts"
 import { StateStore } from "./services/StateStore.ts"
@@ -97,7 +106,7 @@ export const ensureDaemon = Effect.fn("Client.ensureDaemon")(function* (
     })
   }
 
-  yield* Effect.tryPromise({
+  const launchDaemon = Effect.tryPromise({
     try: async () => {
       await mkdir(dirname(socketPath), { recursive: true, mode: 0o700 })
       const daemonLog = `${paths.repoState(project.repoId)}/daemon.log`
@@ -117,6 +126,7 @@ export const ensureDaemon = Effect.fn("Client.ensureDaemon")(function* (
     },
     catch: (cause) => new RunboxError({ operation: "start runbox daemon", message: String(cause) }),
   })
+  yield* launchDaemon
 
   for (let attempt = 0; attempt < 50; attempt += 1) {
     yield* Effect.sleep("100 millis")
@@ -125,6 +135,9 @@ export const ensureDaemon = Effect.fn("Client.ensureDaemon")(function* (
       packagePath: project.packagePath,
     }, 250).pipe(Effect.option)
     if (response._tag === "Some" && response.value.ok) return socketPath
+    if (attempt > 0 && attempt % 10 === 0 && !(yield* Effect.promise(() => exists(socketPath)))) {
+      yield* launchDaemon
+    }
   }
   return yield* new RunboxError({
     operation: "start runbox daemon",
@@ -155,20 +168,30 @@ export const ensureDaemonConfigured = Effect.fn("Client.ensureDaemonConfigured")
   state: RepoState,
 ) {
   let socket = yield* ensureDaemon(project, state)
-  if (state.environmentSourceRoot === null) return socket
-  const environmentSourceRoot = state.environmentSourceRoot
   const status = yield* daemonRequest(socket, {
     type: "status",
     packagePath: project.packagePath,
   })
-  const configure = () => daemonRequest(socket, {
-    type: "configure",
-    environmentSourceRoot,
-  })
-  const initial = yield* configure().pipe(Effect.either)
-  if (initial._tag === "Right") return socket
-  if (initial.left.code !== "INVALID_REQUEST") return yield* initial.left
+  const configure = () => state.environmentSourceRoot === null
+    ? Effect.void
+    : daemonRequest(socket, {
+        type: "configure",
+        environmentSourceRoot: state.environmentSourceRoot,
+      }).pipe(Effect.asVoid)
+  if (status.protocolVersion === RUNBOX_PROTOCOL_VERSION) {
+    yield* configure()
+    return socket
+  }
+  if (status.protocolVersion !== undefined && status.protocolVersion > RUNBOX_PROTOCOL_VERSION) {
+    return yield* new RunboxError({
+      operation: "connect to runbox daemon",
+      message: `daemon protocol ${status.protocolVersion} is newer than client protocol ${RUNBOX_PROTOCOL_VERSION}`,
+      code: "DAEMON_PROTOCOL_NEWER",
+      suggestion: "Upgrade the runbox client before issuing repository commands.",
+    })
+  }
 
+  const previous = status.snapshot
   yield* daemonRequest(socket, { type: "shutdown" }).pipe(
     Effect.catchAll((error) =>
       error.code === "DAEMON_UNAVAILABLE" ? Effect.void : Effect.fail(error)
@@ -177,7 +200,6 @@ export const ensureDaemonConfigured = Effect.fn("Client.ensureDaemonConfigured")
   yield* Effect.sleep("100 millis")
   socket = yield* ensureDaemon(project, state)
   yield* configure()
-  const previous = status.snapshot
   if (previous?.state.source !== null && previous?.state.source !== undefined) {
     for (const record of Object.values(previous.state.commands)) {
       if (record.status !== "preparing" && record.status !== "starting" && record.status !== "running") continue
@@ -187,8 +209,39 @@ export const ensureDaemonConfigured = Effect.fn("Client.ensureDaemonConfigured")
         script: record.script,
         args: record.args,
         source: previous.state.source,
+        watch: record.sourceWatch,
       })
     }
   }
   return socket
+})
+
+export const daemonForward = Effect.fn("Client.daemonForward")(function* (
+  socketPath: string,
+  value: Extract<DaemonRequest, { readonly type: "forward" }>,
+  callbacks: {
+    readonly onStart: (start: ForwardStart) => void
+    readonly onOutput: (stream: "stdout" | "stderr", text: string) => void
+  },
+) {
+  const response = yield* requestForward(socketPath, value, callbacks)
+  if (!response.ok) {
+    return yield* new RunboxError({
+      operation: response.error.operation,
+      message: response.error.message,
+      code: response.error.code,
+      suggestion: response.error.suggestion,
+      retryable: response.error.retryable,
+      details: response.error.details,
+    })
+  }
+  if (response.forward === undefined) {
+    return yield* new RunboxError({
+      operation: "read forwarded command result",
+      message: "daemon returned no forwarded command result",
+      code: "INVALID_RESPONSE",
+      suggestion: "Upgrade runbox and retry the command.",
+    })
+  }
+  return response.forward satisfies ForwardResult
 })

@@ -217,6 +217,7 @@ export class Agent extends Context.Tag("@runbox/Agent")<
             "Follow the active preparation memory first. Do not rediscover repository setup already established there unless a recorded check or command fails.",
             "Read only the repository documentation needed to resolve missing or stale memory. You may install dependencies, stop stale processes, and create ignored/generated environment files.",
             "Do not edit tracked files or create non-ignored source files. Do not leave the requested command running; runbox owns it.",
+            "The runner may already contain a SourceSync-owned dirty overlay from the active worktree. Preserve that overlay byte-for-byte; it is intentional source state, not cleanup work.",
             `The command runs from ${packageDir}. Runbox synchronizes ignored .env files from ${request.state.environmentSourceRoot ?? "the configured environment source"} and loads .env plus .env.local from each ancestor package directory. Never read or print secret values; inspect only file existence and variable names/presence. Do not guess credentials or replace synchronized values; report any missing required secret.`,
             request.failureOutput === undefined
               ? "Reuse valid existing dependencies and generated artifacts; do not reinstall them without evidence they are stale or missing."

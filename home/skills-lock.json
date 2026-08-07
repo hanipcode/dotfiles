@@ -19,6 +19,12 @@
       "skillPath": "skills/engineering/codebase-design/SKILL.md",
       "computedHash": "6d9d51d8caa01633fd00cf87089c5618c982321f942ac69f62565dc001c6b22f"
     },
+    "coding-standards": {
+      "source": "dmmulroy/.dotfiles",
+      "sourceType": "github",
+      "skillPath": "home/.agents/skills/coding-standards/SKILL.md",
+      "computedHash": "80ec421f0aca254403bd0299d00b0710c3476941ea4edfd4fe2cb134fbec6ae9"
+    },
     "diagnosing-bugs": {
       "source": "mattpocock/skills",
       "sourceType": "github",

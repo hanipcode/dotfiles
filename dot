@@ -301,17 +301,21 @@ cmd_plugins() {
 cmd_tools() {
   head_ "personal tools"
   need bun || return 1
-  if [ -f "$DOTFILES/runbox/package.json" ]; then
-    ( cd "$DOTFILES/runbox" && bun install --frozen-lockfile >/dev/null && bun link >/dev/null )
-    ok "linked runbox"
-  fi
+  local tool
+  for tool in runbox hanif-agent; do
+    if [ -f "$DOTFILES/$tool/package.json" ]; then
+      ( cd "$DOTFILES/$tool" && bun install --frozen-lockfile >/dev/null && bun link >/dev/null )
+      chmod go-w "$DOTFILES/$tool"/bin/*
+      ok "linked $tool"
+    fi
+  done
 }
 
 cmd_doctor() {
   local fail=0
 
   head_ "Tools"
-  for t in stow brew git nvim herdr bun fzf runbox; do
+  for t in stow brew git nvim herdr bun fzf opencode runbox hanif-agent; do
     if command -v "$t" >/dev/null 2>&1; then ok "$t"; else bad "$t missing"; fail=1; fi
   done
 

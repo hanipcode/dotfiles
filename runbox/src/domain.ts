@@ -1,6 +1,8 @@
 import { Schema } from "effect"
 import { createHash } from "node:crypto"
 
+export const RUNBOX_PROTOCOL_VERSION = 2
+
 export const CommandStatus = Schema.Literal(
   "preparing",
   "starting",
@@ -70,6 +72,7 @@ export const CommandRecord = Schema.Struct({
   processToken: Schema.NullOr(Schema.String).pipe(
     Schema.optionalWith({ default: () => null }),
   ),
+  sourceWatch: Schema.optional(Schema.Boolean),
 })
 export type CommandRecord = typeof CommandRecord.Type
 
@@ -126,14 +129,87 @@ export interface PackageInfo {
   readonly manager: "bun" | "pnpm" | "yarn" | "npm"
 }
 
+export const SyncSnapshot = Schema.Struct({
+  mode: Schema.Literal("off", "watch"),
+  phase: Schema.Literal("idle", "syncing", "watching", "failed"),
+  sourcePath: Schema.NullOr(Schema.String),
+  sourceCommit: Schema.NullOr(Schema.String),
+  revision: Schema.NullOr(Schema.String),
+  lastCompletedAt: Schema.NullOr(Schema.Number),
+  copied: Schema.Number,
+  removed: Schema.Number,
+  tracked: Schema.Number,
+  untracked: Schema.Number,
+  setupChanged: Schema.Boolean,
+  pending: Schema.Boolean,
+  error: Schema.NullOr(Schema.String),
+})
+export type SyncSnapshot = typeof SyncSnapshot.Type
+
+export const SyncResult = Schema.Struct({
+  sourcePath: Schema.String,
+  sourceCommit: Schema.String,
+  revision: Schema.String,
+  copied: Schema.Number,
+  removed: Schema.Number,
+  tracked: Schema.Number,
+  untracked: Schema.Number,
+  setupChanged: Schema.Boolean,
+  completedAt: Schema.Number,
+})
+export type SyncResult = typeof SyncResult.Type
+
 export const RepoSnapshot = Schema.Struct({
   state: RepoState,
   scripts: Schema.Array(Schema.String),
   packagePath: Schema.String,
   logs: Schema.Record({ key: Schema.String, value: Schema.String }),
   metrics: Schema.Record({ key: Schema.String, value: ProcessMetrics }),
+  sync: Schema.optional(SyncSnapshot),
 })
 export type RepoSnapshot = typeof RepoSnapshot.Type
+
+export const ForwardStart = Schema.Struct({
+  invocationId: Schema.String,
+  argv: Schema.Array(Schema.String),
+  cwd: Schema.String,
+  sourceCommit: Schema.String,
+  startedAt: Schema.Number,
+  logFile: Schema.String,
+})
+export type ForwardStart = typeof ForwardStart.Type
+
+export const ForwardWarning = Schema.Struct({
+  code: Schema.String,
+  message: Schema.String,
+})
+export type ForwardWarning = typeof ForwardWarning.Type
+
+export const ForwardResult = Schema.Struct({
+  invocationId: Schema.String,
+  started: Schema.Literal(true),
+  argv: Schema.Array(Schema.String),
+  cwd: Schema.String,
+  sourceCommit: Schema.String,
+  startedAt: Schema.Number,
+  finishedAt: Schema.Number,
+  durationMs: Schema.Number,
+  exitCode: Schema.Number,
+  signal: Schema.NullOr(Schema.String),
+  logFile: Schema.String,
+  warnings: Schema.Array(ForwardWarning),
+})
+export type ForwardResult = typeof ForwardResult.Type
+
+export const ForwardStreamFrame = Schema.Union(
+  Schema.Struct({ type: Schema.Literal("start"), data: ForwardStart }),
+  Schema.Struct({
+    type: Schema.Literal("output"),
+    stream: Schema.Literal("stdout", "stderr"),
+    text: Schema.String,
+  }),
+)
+export type ForwardStreamFrame = typeof ForwardStreamFrame.Type
 
 export type DaemonRequest =
   | { readonly type: "ping" }
@@ -144,6 +220,7 @@ export type DaemonRequest =
       readonly script: string
       readonly args: ReadonlyArray<string>
       readonly source: SourceRef
+      readonly watch?: boolean | undefined
     }
   | { readonly type: "setup"; readonly packagePath: string; readonly source: SourceRef }
   | { readonly type: "stop"; readonly packagePath: string; readonly script: string | "all"; readonly expectedRevision?: string | undefined }
@@ -156,8 +233,16 @@ export type DaemonRequest =
       readonly script: string
       readonly args: ReadonlyArray<string>
       readonly source: SourceRef
+      readonly watch?: boolean | undefined
       readonly expectedRevision?: string | undefined
     }
+  | {
+      readonly type: "forward"
+      readonly packagePath: string
+      readonly argv: ReadonlyArray<string>
+      readonly source: SourceRef
+    }
+  | { readonly type: "sync"; readonly packagePath: string; readonly source: SourceRef }
   | { readonly type: "shutdown" }
 
 export const DaemonRequestSchema = Schema.Union(
@@ -169,6 +254,7 @@ export const DaemonRequestSchema = Schema.Union(
     script: Schema.String,
     args: Schema.Array(Schema.String),
     source: SourceRef,
+    watch: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({ type: Schema.Literal("setup"), packagePath: Schema.String, source: SourceRef }),
   Schema.Struct({ type: Schema.Literal("stop"), packagePath: Schema.String, script: Schema.String, expectedRevision: Schema.optional(Schema.String) }),
@@ -181,12 +267,20 @@ export const DaemonRequestSchema = Schema.Union(
     script: Schema.String,
     args: Schema.Array(Schema.String),
     source: SourceRef,
+    watch: Schema.optional(Schema.Boolean),
     expectedRevision: Schema.optional(Schema.String),
   }),
+  Schema.Struct({
+    type: Schema.Literal("forward"),
+    packagePath: Schema.String,
+    argv: Schema.Array(Schema.String),
+    source: SourceRef,
+  }),
+  Schema.Struct({ type: Schema.Literal("sync"), packagePath: Schema.String, source: SourceRef }),
   Schema.Struct({ type: Schema.Literal("shutdown") }),
 )
 
-const ErrorInfoSchema = Schema.Struct({
+export const ErrorInfoSchema = Schema.Struct({
   code: Schema.String,
   message: Schema.String,
   operation: Schema.String,
@@ -198,8 +292,11 @@ const ErrorInfoSchema = Schema.Struct({
 export const DaemonResponseSchema = Schema.Union(
   Schema.Struct({
     ok: Schema.Literal(true),
+    protocolVersion: Schema.optional(Schema.Number),
     snapshot: Schema.optional(RepoSnapshot),
     message: Schema.optional(Schema.String),
+    forward: Schema.optional(ForwardResult),
+    sync: Schema.optional(SyncResult),
   }),
   Schema.Struct({ ok: Schema.Literal(false), error: ErrorInfoSchema }),
 )

@@ -1,5 +1,6 @@
 import { useKeyboard, useTerminalDimensions } from "@opentui/react"
-import { useEffect, useRef, useState, type ReactNode } from "react"
+import type { ScrollBoxRenderable } from "@opentui/core"
+import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react"
 import type {
   ActionPlan,
   ActionReceipt,
@@ -123,6 +124,14 @@ const HotkeyHint = ({ shortcut, label }: { readonly shortcut: string; readonly l
   </>
 )
 
+const verticalScrollbarOptions = {
+  showArrows: false,
+  trackOptions: {
+    backgroundColor: theme.surface0,
+    foregroundColor: theme.overlay1,
+  },
+}
+
 const sourceLabel = (view: GlobalView): string => {
   const source = view.selected?.state.source
   if (source === null || source === undefined) return "not prepared"
@@ -227,12 +236,16 @@ export const GlobalDashboard = ({ initial, initialIntent, onInspect, onPlan, onC
   const [filtering, setFiltering] = useState<FilterablePane | null>(null)
   const initialStarted = useRef(false)
   const requestGeneration = useRef(0)
+  const projectScroll = useRef<ScrollBoxRenderable>(null)
+  const sourceScroll = useRef<ScrollBoxRenderable>(null)
+  const commandScroll = useRef<ScrollBoxRenderable>(null)
   const message = feedback?.text ?? null
 
   const selectedRepository = view.repositories.find((entry) => entry.repoId === repositoryId) ?? view.repositories[0]
   const worktrees = view.selected?.worktrees ?? []
   const visibleRepositories = filteredRepositories(view.repositories, filters.projects)
   const visibleWorktrees = filteredWorktrees(worktrees, filters.sources)
+  const highlightedRepository = visibleRepositories[Math.min(projectCursor, Math.max(0, visibleRepositories.length - 1))]
   const selectedWorktree = visibleWorktrees[Math.min(sourceCursor, Math.max(0, visibleWorktrees.length - 1))]
   const inspectedWorktree = worktrees.find((entry) => entry.path === view.selected?.selectedWorktreePath)
   const commands = rowsFor(view.selected?.packages ?? [], view.selected?.state.commands ?? {})
@@ -241,8 +254,8 @@ export const GlobalDashboard = ({ initial, initialIntent, onInspect, onPlan, onC
   const selectedRecord = selectedCommandId === null
     ? selectedRow?.record ?? null
     : view.selected?.state.commands[selectedCommandId] ?? selectedRow?.record ?? null
-  const narrow = terminal.width < 88
-  const wide = terminal.width >= 126
+  const narrow = terminal.width < 88 || terminal.height < 16
+  const topPaneHeight = Math.min(14, Math.max(9, Math.floor((terminal.height - 2) * 0.36)))
   const stackVisible = view.selected?.state.source?.kind === "stack"
     && view.selected.state.source.stack !== null
     && includesFilter(`stack ${sourceLabel(view)}`, filters.sources)
@@ -314,19 +327,33 @@ export const GlobalDashboard = ({ initial, initialIntent, onInspect, onPlan, onC
     })
   }
 
+  const refreshPassively = useEffectEvent(() => {
+    if (plan !== null || busy || repositoryId === null) return
+    inspect({
+      repositoryId,
+      ...(view.selected?.selectedWorktreePath === null || view.selected?.selectedWorktreePath === undefined ? {} : { worktreePath: view.selected.selectedWorktreePath }),
+      ...(selectedCommandId === null ? {} : { commandId: selectedCommandId }),
+    }, false)
+  })
+
   useEffect(() => {
-    const timer = setInterval(() => {
-      if (plan !== null || busy || repositoryId === null) return
-      inspect({
-        repositoryId,
-        ...(view.selected?.selectedWorktreePath === null || view.selected?.selectedWorktreePath === undefined ? {} : { worktreePath: view.selected.selectedWorktreePath }),
-        ...(selectedCommandId === null ? {} : { commandId: selectedCommandId }),
-      }, false)
-    }, 2_000)
+    const timer = setInterval(refreshPassively, 2_000)
     return () => {
       clearInterval(timer)
     }
-  }, [busy, plan, repositoryId, selectedCommandId, view.selected?.selectedWorktreePath])
+  }, [])
+
+  useEffect(() => {
+    if (highlightedRepository !== undefined) projectScroll.current?.scrollChildIntoView(`repository:${highlightedRepository.repoId}`)
+  }, [highlightedRepository?.repoId])
+
+  useEffect(() => {
+    if (selectedWorktree !== undefined) sourceScroll.current?.scrollChildIntoView(`source:${selectedWorktree.path}`)
+  }, [selectedWorktree?.path])
+
+  useEffect(() => {
+    if (selectedRow !== undefined) commandScroll.current?.scrollChildIntoView(`command:${selectedRow.id}`)
+  }, [selectedRow?.id])
 
   useEffect(() => {
     if (feedback?.kind !== "notice") return
@@ -635,7 +662,7 @@ export const GlobalDashboard = ({ initial, initialIntent, onInspect, onPlan, onC
           <text><HotkeyHint shortcut="p" label="repositories" /></text>
           <text><HotkeyHint shortcut="w" label="worktrees" /></text>
           <text><HotkeyHint shortcut="c" label="commands" /></text>
-          <text><HotkeyHint shortcut="o" label="retained output" /></text>
+          <text><HotkeyHint shortcut="o" label="logs" /></text>
           <text style={{ fg: theme.text }}>tab / shift-tab cycle panes</text>
           <text style={{ fg: theme.text }}>j/k or arrows   move selection</text>
           <text style={{ fg: theme.text }}>enter           inspect selection</text>
@@ -677,17 +704,19 @@ export const GlobalDashboard = ({ initial, initialIntent, onInspect, onPlan, onC
       focused={focus === "projects"}
       filter={{ value: filters.projects, editing: filtering === "projects", onInput: (value) => updateFilter("projects", value), onClose: () => setFiltering(null) }}
     >
-      {view.repositories.length === 0 ? <text style={{ fg: theme.overlay0 }}>no initialized repositories</text> : null}
-      {view.repositories.length > 0 && visibleRepositories.length === 0 ? <text style={{ fg: theme.overlay0 }}>no matching repositories</text> : null}
-      {visibleRepositories.map((repository, index) => {
-        const selected = index === projectCursor
-        const marker = repository.problem !== null ? "!" : repository.activeCommandCount > 0 ? "*" : "-"
-        return (
-          <text key={repository.repoId} wrapMode="none" truncate style={{ fg: selected ? theme.text : repository.problem === null ? theme.subtext0 : theme.red }}>
-            {`${selected ? ">" : " "} ${marker} ${repository.name}  ${repository.activeCommandCount > 0 ? repository.activeCommandCount : ""}`}
-          </text>
-        )
-      })}
+      <scrollbox ref={projectScroll} scrollY verticalScrollbarOptions={verticalScrollbarOptions} style={{ minHeight: 1, flexGrow: 1 }}>
+        {view.repositories.length === 0 ? <text style={{ fg: theme.overlay0 }}>no initialized repositories</text> : null}
+        {view.repositories.length > 0 && visibleRepositories.length === 0 ? <text style={{ fg: theme.overlay0 }}>no matching repositories</text> : null}
+        {visibleRepositories.map((repository, index) => {
+          const selected = index === projectCursor
+          const marker = repository.problem !== null ? "!" : repository.activeCommandCount > 0 ? "*" : "-"
+          return (
+            <text id={`repository:${repository.repoId}`} key={repository.repoId} wrapMode="none" truncate style={{ fg: selected ? theme.text : repository.problem === null ? theme.subtext0 : theme.red }}>
+              {`${selected ? ">" : " "} ${marker} ${repository.name}  ${repository.activeCommandCount > 0 ? repository.activeCommandCount : ""}`}
+            </text>
+          )
+        })}
+      </scrollbox>
     </PaneFrame>
   )
 
@@ -699,71 +728,71 @@ export const GlobalDashboard = ({ initial, initialIntent, onInspect, onPlan, onC
       focused={focus === "sources"}
       filter={{ value: filters.sources, editing: filtering === "sources", onInput: (value) => updateFilter("sources", value), onClose: () => setFiltering(null) }}
     >
-      {stackVisible
-        ? <text wrapMode="none" truncate style={{ fg: theme.blue }}>{`S stack ${sourceLabel(view)} [display]`}</text>
-        : null}
-      {worktrees.length > 0 && visibleWorktrees.length === 0 && !stackVisible ? <text style={{ fg: theme.overlay0 }}>no matching sources</text> : null}
-      {visibleWorktrees.map((worktree, index) => {
-        const selected = index === sourceCursor
-        const activeCommit = worktree.isActiveSource && view.selected?.state.source?.kind === "worktree"
-          ? view.selected.state.source.commit
-          : null
-        const flags = [
-          activeCommit === null ? null : activeCommit === worktree.head ? "runner" : `runner@${activeCommit.slice(0, 8)}`,
-          worktree.isEnvironmentSource ? "env" : null,
-          worktree.locked === null ? null : "locked",
-          worktree.prunable === null ? null : "prunable",
-        ].filter(Boolean).join(",")
-        return (
-          <box key={worktree.path} style={{ flexDirection: "column" }}>
-            <text wrapMode="none" truncate style={{ fg: selected ? theme.text : worktree.prunable === null ? theme.subtext0 : theme.red }}>
-              {`${selected ? ">" : " "} ${worktree.branch ?? "detached"}`}
-            </text>
-            <text wrapMode="none" truncate style={{ fg: theme.overlay0 }}>{`    ${worktree.head.slice(0, 8)}${flags === "" ? "" : `  [${flags}]`}`}</text>
-          </box>
-        )
-      })}
+      <scrollbox ref={sourceScroll} scrollY verticalScrollbarOptions={verticalScrollbarOptions} style={{ minHeight: 1, flexGrow: 1 }}>
+        {stackVisible
+          ? <text wrapMode="none" truncate style={{ fg: theme.blue }}>{`S stack ${sourceLabel(view)} [display]`}</text>
+          : null}
+        {worktrees.length > 0 && visibleWorktrees.length === 0 && !stackVisible ? <text style={{ fg: theme.overlay0 }}>no matching sources</text> : null}
+        {visibleWorktrees.map((worktree, index) => {
+          const selected = index === sourceCursor
+          const activeCommit = worktree.isActiveSource && view.selected?.state.source?.kind === "worktree"
+            ? view.selected.state.source.commit
+            : null
+          const flags = [
+            activeCommit === null ? null : activeCommit === worktree.head ? "runner" : `runner@${activeCommit.slice(0, 8)}`,
+            worktree.isEnvironmentSource ? "env" : null,
+            worktree.locked === null ? null : "locked",
+            worktree.prunable === null ? null : "prunable",
+          ].filter(Boolean).join(",")
+          return (
+            <box id={`source:${worktree.path}`} key={worktree.path} style={{ flexDirection: "column" }}>
+              <text wrapMode="none" truncate style={{ fg: selected ? theme.text : worktree.prunable === null ? theme.subtext0 : theme.red }}>
+                {`${selected ? ">" : " "} ${worktree.branch ?? "detached"}`}
+              </text>
+              <text wrapMode="none" truncate style={{ fg: theme.overlay0 }}>{`    ${worktree.head.slice(0, 8)}${flags === "" ? "" : `  [${flags}]`}`}</text>
+            </box>
+          )
+        })}
+      </scrollbox>
     </PaneFrame>
   )
 
   const commandPane = (
     <PaneFrame
       shortcut="c"
-      label="packages / commands"
+      label="commands"
       count={visibleCommands.length}
       focused={focus === "commands"}
       filter={{ value: filters.commands, editing: filtering === "commands", onInput: (value) => updateFilter("commands", value), onClose: () => setFiltering(null) }}
     >
-      {commands.length === 0 ? <text style={{ fg: theme.overlay0 }}>no package scripts in selected worktree</text> : null}
-      {commands.length > 0 && visibleCommands.length === 0 ? <text style={{ fg: theme.overlay0 }}>no matching commands</text> : null}
-      {visibleCommands.map((row, index) => {
-        const selected = index === commandCursor
-        const status = row.record?.status ?? (row.script?.prepared === true ? "ready" : null)
-        return (
-          <CommandListRow key={row.id} label={row.id} selected={selected} status={status} />
-        )
-      })}
+      <scrollbox ref={commandScroll} scrollY verticalScrollbarOptions={verticalScrollbarOptions} style={{ minHeight: 1, flexGrow: 1 }}>
+        {commands.length === 0 ? <text style={{ fg: theme.overlay0 }}>no package scripts in selected worktree</text> : null}
+        {commands.length > 0 && visibleCommands.length === 0 ? <text style={{ fg: theme.overlay0 }}>no matching commands</text> : null}
+        {visibleCommands.map((row, index) => {
+          const selected = index === commandCursor
+          const status = row.record?.status ?? (row.script?.prepared === true ? "ready" : null)
+          return <box id={`command:${row.id}`} key={row.id}><CommandListRow label={row.id} selected={selected} status={status} /></box>
+        })}
+      </scrollbox>
+      <box style={{ height: 4, flexShrink: 0, flexDirection: "column", overflow: "hidden" }}>
+        <text wrapMode="none" truncate style={{ fg: theme.mauve }}>{`status  ${selectedRow?.id ?? selectedRepository?.name ?? "select a repository"}`}</text>
+        <text wrapMode="none" truncate style={{ fg: theme.subtext0 }}>{`source  ${sourceLabel(view)}  env ${selectedRepository?.environmentSourceRoot ?? "not configured"}`}</text>
+        <text wrapMode="none" truncate style={{ fg: theme.subtext0 }}>{`storage ${selectedRepository?.storage ?? "-"}  daemon ${selectedRepository?.daemon ?? "-"}  setup ${view.selected?.preparation.setup ?? "-"}`}</text>
+        {selectedRecord === null ? (
+          <text wrapMode="none" truncate style={{ fg: theme.overlay1 }}>{selectedRow?.script?.command ?? "no retained command status"}</text>
+        ) : (
+          <text wrapMode="none" truncate style={{ fg: commandStatusColor(selectedRecord.status) }}>{`${selectedRecord.status}  pid ${selectedRecord.pid ?? "-"}  cpu ${view.selected?.selectedMetrics?.cpuPercent.toFixed(1) ?? "0.0"}%  memory ${bytes(view.selected?.selectedMetrics?.memoryBytes ?? 0)}  processes ${view.selected?.selectedMetrics?.processCount ?? 0}  uptime ${duration(view.selected?.selectedMetrics?.uptimeSeconds ?? 0)}`}</text>
+        )}
+      </box>
     </PaneFrame>
   )
 
-  const detailPane = (
-    <PaneFrame shortcut="o" label="retained output" focused={focus === "detail"}>
-      <text wrapMode="none" truncate style={{ fg: theme.mauve }}>{selectedRow?.id ?? selectedRepository?.name ?? "select a repository"}</text>
-      <text wrapMode="none" truncate style={{ fg: theme.subtext0 }}>{`active  ${sourceLabel(view)}`}</text>
-      <text wrapMode="none" truncate style={{ fg: theme.subtext0 }}>{`env     ${selectedRepository?.environmentSourceRoot ?? "not configured"}`}</text>
-      <text wrapMode="none" truncate style={{ fg: theme.subtext0 }}>{`storage ${selectedRepository?.storage ?? "-"}  daemon ${selectedRepository?.daemon ?? "-"}  setup ${view.selected?.preparation.setup ?? "-"}`}</text>
-      {selectedRecord === null ? (
-        <text style={{ fg: theme.overlay1 }}>{selectedRow?.script?.command ?? "enter a command to inspect retained output"}</text>
-      ) : (
-        <>
-          <text wrapMode="none" truncate style={{ fg: commandStatusColor(selectedRecord.status) }}>{`${selectedRecord.status}  pid ${selectedRecord.pid ?? "-"}  cpu ${view.selected?.selectedMetrics?.cpuPercent.toFixed(1) ?? "0.0"}%`}</text>
-          <text wrapMode="none" truncate style={{ fg: theme.subtext0 }}>{`memory ${bytes(view.selected?.selectedMetrics?.memoryBytes ?? 0)}  processes ${view.selected?.selectedMetrics?.processCount ?? 0}  uptime ${duration(view.selected?.selectedMetrics?.uptimeSeconds ?? 0)}`}</text>
-          <scrollbox id="global-dashboard-logs" focused={focus === "detail"} stickyScroll stickyStart="bottom" scrollY style={{ flexGrow: 1 }}>
-            <text wrapMode="char" style={{ fg: theme.text }}>{formatLogOutput(view.selected?.selectedLog ?? "") || selectedRecord.message || "waiting for output..."}</text>
-          </scrollbox>
-        </>
-      )}
-      {(view.selected?.problems ?? []).map((entry) => <text key={`${entry.code}:${entry.path}`} wrapMode="none" truncate style={{ fg: theme.red }}>{`${entry.code}: ${entry.message}`}</text>)}
+  const logPane = (
+    <PaneFrame shortcut="o" label="logs" focused={focus === "detail"}>
+      <scrollbox id="global-dashboard-logs" focused={focus === "detail"} stickyScroll stickyStart="bottom" scrollY verticalScrollbarOptions={verticalScrollbarOptions} style={{ minHeight: 1, flexGrow: 1 }}>
+        <text wrapMode="char" style={{ fg: theme.text }}>{formatLogOutput(view.selected?.selectedLog ?? "") || selectedRecord?.message || selectedRow?.script?.command || "enter a command to inspect its logs"}</text>
+      </scrollbox>
+      {(view.selected?.problems ?? []).map((entry) => <text key={`${entry.code}:${entry.path}`} wrapMode="none" truncate style={{ height: 1, flexShrink: 0, fg: theme.red }}>{`${entry.code}: ${entry.message}`}</text>)}
     </PaneFrame>
   )
 
@@ -776,13 +805,16 @@ export const GlobalDashboard = ({ initial, initialIntent, onInspect, onPlan, onC
       </box>
       {narrow ? (
         <box style={{ flexGrow: 1, overflow: "hidden", paddingLeft: 1, paddingRight: 1, backgroundColor: theme.base }}>
-          {focus === "projects" ? projectPane : focus === "sources" ? sourcePane : focus === "commands" ? commandPane : detailPane}
+          {focus === "projects" ? projectPane : focus === "sources" ? sourcePane : focus === "commands" ? commandPane : logPane}
         </box>
       ) : (
-        <box style={{ flexGrow: 1, flexDirection: "row", gap: 1, overflow: "hidden", paddingLeft: 1, paddingRight: 1, backgroundColor: theme.base }}>
-          <box style={{ width: wide ? 34 : 28, minHeight: 9, flexShrink: 0, flexDirection: "column", gap: 1, backgroundColor: theme.base }}>{projectPane}{sourcePane}</box>
-          <box style={wide ? { width: 54, flexGrow: 0 } : { minWidth: 0, flexGrow: 1 }}>{wide || focus !== "detail" ? commandPane : detailPane}</box>
-          {wide ? <box style={{ flexGrow: 1 }}>{detailPane}</box> : null}
+        <box style={{ minHeight: 0, flexGrow: 1, flexDirection: "column", gap: 1, overflow: "hidden", paddingLeft: 1, paddingRight: 1, backgroundColor: theme.base }}>
+          <box style={{ height: topPaneHeight, flexShrink: 0, flexDirection: "row", gap: 1, overflow: "hidden", backgroundColor: theme.base }}>
+            <box style={{ minWidth: 0, flexBasis: 0, flexGrow: 1 }}>{projectPane}</box>
+            <box style={{ minWidth: 0, flexBasis: 0, flexGrow: 1 }}>{sourcePane}</box>
+            <box style={{ minWidth: 0, flexBasis: 0, flexGrow: 1 }}>{commandPane}</box>
+          </box>
+          <box style={{ minHeight: 4, flexGrow: 1 }}>{logPane}</box>
         </box>
       )}
       <box style={{ height: 1, flexShrink: 0, overflow: "hidden", paddingLeft: 1, paddingRight: 1, backgroundColor: theme.base }}>
@@ -791,7 +823,7 @@ export const GlobalDashboard = ({ initial, initialIntent, onInspect, onPlan, onC
             <HotkeyHint shortcut="p" label="repos" />
             <HotkeyHint shortcut="w" label="sources" />
             <HotkeyHint shortcut="c" label="commands" />
-            <HotkeyHint shortcut="o" label="output" />
+            <HotkeyHint shortcut="o" label="logs" />
             {focus === "sources" ? <HotkeyHint shortcut="x" label="switch" /> : null}
             {focus === "commands" ? <HotkeyHint shortcut="r" label="run" /> : null}
             {focus === "commands" || focus === "detail" ? <HotkeyHint shortcut="s/R" label="stop/restart" /> : null}

@@ -80,6 +80,75 @@ describe("GlobalDashboard", () => {
     expect(sourceCursorForInspection(0, worktrees, "/repos/main", false)).toBe(1)
   })
 
+  it("preserves highlighted rows when passive inspection refreshes", async () => {
+    const refreshView: GlobalView = {
+      ...view,
+      repositories: [
+        ...view.repositories,
+        {
+          ...view.repositories[0]!,
+          repoId: "worker",
+          name: "worker",
+          key: "worker#worker",
+          repositoryRoot: "/repos/worker",
+        },
+      ],
+      selected: view.selected === null ? null : {
+        ...view.selected,
+        worktrees: [
+          ...view.selected.worktrees,
+          {
+            path: "/repos/operator-feature",
+            branch: "feature/next",
+            head: "abcdef1234567890",
+            locked: null,
+            prunable: null,
+            isActiveSource: false,
+            isEnvironmentSource: false,
+          },
+        ],
+        packages: view.selected.packages.map((pkg) => ({
+          ...pkg,
+          scripts: [
+            ...pkg.scripts,
+            { name: "preview", command: "vite preview", prepared: true, tracked: null },
+          ],
+        })),
+      },
+    }
+    const setup = await testRender(
+      <GlobalDashboard
+        initial={refreshView}
+        onInspect={() => Promise.resolve(refreshView)}
+        onPlan={() => new Promise(() => {})}
+        onCommit={() => new Promise(() => {})}
+        onExecute={() => new Promise(() => {})}
+      />,
+      { width: 140, height: 28, useMouse: true },
+    )
+    try {
+      await setup.flush()
+      setup.mockInput.pressArrow("down")
+      await Bun.sleep(10)
+      setup.mockInput.pressKey("w")
+      await Bun.sleep(10)
+      setup.mockInput.pressArrow("down")
+      await Bun.sleep(10)
+      setup.mockInput.pressKey("c")
+      await Bun.sleep(10)
+      setup.mockInput.pressArrow("down")
+      await Bun.sleep(2_100)
+      await setup.flush()
+
+      const frame = setup.captureCharFrame()
+      expect(frame).toContain("> - worker")
+      expect(frame).toContain("> feature/next")
+      expect(frame).toContain("> apps/operator:preview")
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
   it("renders repository, source, and package command panes", async () => {
     const pending = new Promise<GlobalView>(() => {})
     const setup = await testRender(
@@ -101,23 +170,24 @@ describe("GlobalDashboard", () => {
       expect(frame).toContain("sources")
       expect(frame).toContain("p repositories (1)")
       expect(frame).toContain("w sources (1)")
-      expect(frame).toContain("c packages / commands (1)")
-      expect(frame).toContain("o retained output")
+      expect(frame).toContain("c commands (1)")
+      expect(frame).toContain("o logs")
       expect(frame).not.toContain("repositories1")
       expect(frame).not.toContain("commands1")
       expect(frame).toContain("fix/dropdown")
       expect(frame).toContain("apps/operator:dev")
       expect(frame).toContain("[ready]")
       expect(frame).not.toContain("available")
-      expect(frame).toContain("o retained output")
       const lines = frame.split("\n")
       expect(lines[1]?.startsWith(" ╭")).toBe(true)
       expect(lines[1]).toContain("p repositories (1)")
+      expect(lines[1]).toContain("w sources (1)")
+      expect(lines[1]).toContain("c commands (1)")
       expect(lines[2]).not.toContain("p repositories (1)")
-      const firstLeftBottom = lines.findIndex((line) => line.startsWith(" ╰"))
-      expect(firstLeftBottom).toBeGreaterThan(0)
-      expect(lines[firstLeftBottom + 1]?.slice(0, 35).trim()).toBe("")
-      expect(lines[firstLeftBottom + 2]?.startsWith(" ╭")).toBe(true)
+      const logsHeader = lines.findIndex((line) => line.includes("o logs"))
+      expect(logsHeader).toBeGreaterThan(1)
+      expect(lines[logsHeader]?.startsWith(" ╭")).toBe(true)
+      expect(lines[logsHeader]?.trimEnd().endsWith("╮")).toBe(true)
       const richFrame = setup.captureSpans()
       const repositoryHeader = richFrame.lines.find((line) => line.spans.some((span) => span.text.includes("repositories (1)")))
       const shortcutSpan = repositoryHeader?.spans.find((span) => span.text === "p")
@@ -134,6 +204,62 @@ describe("GlobalDashboard", () => {
       const restored = setup.captureCharFrame()
       expect(restored).toContain("p repositories (1)")
       expect(restored.split("\n")[1]?.startsWith(" ╭")).toBe(true)
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  it("keeps logs isolated in a short terminal", async () => {
+    const running = CommandRecord.make({
+      id: "apps/operator:dev",
+      packagePath: "apps/operator",
+      script: "dev",
+      args: [],
+      status: "running",
+      pid: 42,
+      startedAt: Date.now(),
+      exitCode: null,
+      message: null,
+      logFile: "/logs/dev.log",
+      processToken: "token",
+    })
+    const runningView: GlobalView = {
+      ...view,
+      selected: view.selected === null ? null : {
+        ...view.selected,
+        state: RepoState.make({ ...state, commands: { [running.id]: running } }),
+        selectedCommand: running,
+        selectedLog: "ready",
+        packages: view.selected.packages.map((pkg) => ({
+          ...pkg,
+          scripts: pkg.scripts.map((script) => ({ ...script, tracked: running })),
+        })),
+      },
+    }
+    const setup = await testRender(
+      <GlobalDashboard
+        initial={runningView}
+        onInspect={() => new Promise(() => {})}
+        onPlan={() => new Promise(() => {})}
+        onCommit={() => new Promise(() => {})}
+        onExecute={() => new Promise(() => {})}
+      />,
+      { width: 140, height: 8, useMouse: true },
+    )
+    try {
+      await setup.flush()
+      setup.mockInput.pressKey("o")
+      await Bun.sleep(10)
+      await setup.flush()
+      setup.resize(140, 28)
+      await setup.flush()
+      expect(setup.captureCharFrame()).toContain("o logs")
+      setup.resize(140, 8)
+      await setup.flush()
+      const frame = setup.captureCharFrame()
+      expect(frame).toContain("o logs")
+      expect(frame).toContain("ready")
+      expect(frame).not.toContain("status  apps/operator:dev")
     } finally {
       setup.renderer.destroy()
     }
@@ -351,12 +477,12 @@ describe("GlobalDashboard", () => {
       setup.mockInput.pressKey("c")
       await Bun.sleep(10)
       await setup.flush()
-      expect(setup.captureCharFrame()).toContain("c packages / commands (1)")
+      expect(setup.captureCharFrame()).toContain("c commands (1)")
 
       setup.mockInput.pressKey("o")
       await Bun.sleep(10)
       await setup.flush()
-      expect(setup.captureCharFrame()).toContain("o retained output")
+      expect(setup.captureCharFrame()).toContain("o logs")
 
       setup.mockInput.pressKey("p")
       await Bun.sleep(10)
@@ -366,7 +492,49 @@ describe("GlobalDashboard", () => {
       setup.mockInput.pressKey("\t", { shift: true })
       await Bun.sleep(10)
       await setup.flush()
-      expect(setup.captureCharFrame()).toContain("o retained output")
+      expect(setup.captureCharFrame()).toContain("o logs")
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  it("scrolls long command lists to keep the highlighted row visible", async () => {
+    const longCommandView: GlobalView = {
+      ...view,
+      selected: view.selected === null ? null : {
+        ...view.selected,
+        packages: view.selected.packages.map((pkg) => ({
+          ...pkg,
+          scripts: Array.from({ length: 16 }, (_, index) => ({
+            name: `script-${index}`,
+            command: `run script-${index}`,
+            prepared: true,
+            tracked: null,
+          })),
+        })),
+      },
+    }
+    const setup = await testRender(
+      <GlobalDashboard
+        initial={longCommandView}
+        onInspect={() => Promise.resolve(longCommandView)}
+        onPlan={() => new Promise(() => {})}
+        onCommit={() => new Promise(() => {})}
+        onExecute={() => new Promise(() => {})}
+      />,
+      { width: 140, height: 28, useMouse: true },
+    )
+    try {
+      await setup.flush()
+      expect(setup.captureCharFrame()).toMatch(/[▀▄█]/)
+      setup.mockInput.pressKey("c")
+      await Bun.sleep(10)
+      for (let index = 0; index < 12; index += 1) {
+        setup.mockInput.pressArrow("down")
+        await Bun.sleep(5)
+      }
+      await setup.flush()
+      expect(setup.captureCharFrame()).toContain("> apps/operator:script-12")
     } finally {
       setup.renderer.destroy()
     }
@@ -547,7 +715,7 @@ describe("GlobalDashboard", () => {
       setup.mockInput.pressEscape()
       await Bun.sleep(100)
       await setup.flush()
-      expect(setup.captureCharFrame()).toContain("c packages / commands (filtered)")
+      expect(setup.captureCharFrame()).toContain("c commands (filtered)")
       setup.mockInput.pressKey("r")
       await Bun.sleep(10)
       await setup.flush()

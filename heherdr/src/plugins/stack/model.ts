@@ -21,9 +21,14 @@ export interface StackOption {
 export interface StackNavigatorData {
   readonly repoRoot: string
   readonly repoName: string
+  readonly currentWorktreePath: string
   readonly currentBranch: string
   readonly stacks: ReadonlyArray<StackOption>
 }
+
+export const stackTipRow = (stack: StackOption): StackBranchRow | undefined =>
+  stack.rows.find((row) => !row.isTrunk && !row.isMerged) ??
+  stack.rows.find((row) => row.isTrunk)
 
 const stackKey = (stack: GhStack): string =>
   stack.id ?? JSON.stringify([stack.trunk, stack.branches.map((branch) => branch.branch)])
@@ -68,6 +73,7 @@ export const buildStackNavigatorData = (
   return {
     repoRoot: worktrees.source.repo_root,
     repoName: worktrees.source.repo_name,
+    currentWorktreePath: worktrees.source.source_checkout_path,
     currentBranch: catalog.currentBranch,
     stacks: catalog.stacks.map((stack) => ({
       key: stackKey(stack),

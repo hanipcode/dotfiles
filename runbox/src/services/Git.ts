@@ -1,12 +1,38 @@
 import { Context, Effect, Layer } from "effect"
 import { access, cp, lstat, mkdir, readFile, readlink, realpath } from "node:fs/promises"
-import { basename, dirname, isAbsolute, join, resolve } from "node:path"
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path"
 import { createHash } from "node:crypto"
 import type { ProjectContext, RepoState, SourceRef } from "../domain.ts"
 import { DirtyWorktree, RunboxError } from "../errors.ts"
 import { Shell } from "./Shell.ts"
 
 const exists = (path: string) => access(path).then(() => true, () => false)
+
+const assertPhysicalPath = async (
+  rootPath: string,
+  relativePath: string,
+  location: "environment source" | "runner",
+): Promise<string> => {
+  const root = resolve(rootPath)
+  const destination = resolve(root, relativePath)
+  if (destination === root || !destination.startsWith(`${root}${sep}`)) {
+    throw new Error(`${relativePath} escapes the managed runner`)
+  }
+  const rootStat = await lstat(root)
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    throw new Error(`${location} root is not a physical directory: ${root}`)
+  }
+  let parent = root
+  for (const part of relativePath.split(/[\\/]/).slice(0, -1)) {
+    parent = join(parent, part)
+    const stat = await lstat(parent).catch((cause: NodeJS.ErrnoException) =>
+      cause.code === "ENOENT" ? null : Promise.reject(cause)
+    )
+    if (stat === null) break
+    if (stat.isSymbolicLink()) throw new Error(`${relativePath} traverses symlinked ${location} directory ${parent}`)
+  }
+  return destination
+}
 
 export class Git extends Context.Tag("@runbox/Git")<
   Git,
@@ -42,6 +68,7 @@ export class Git extends Context.Tag("@runbox/Git")<
       override?: string,
     ) => Effect.Effect<string, RunboxError>
     readonly syncEnvironment: (state: RepoState) => Effect.Effect<void, RunboxError>
+    readonly sourceAt: (path: string, commonDir: string) => Effect.Effect<SourceRef, RunboxError>
   }
 >() {
   static readonly layer = Layer.effect(
@@ -197,7 +224,43 @@ export class Git extends Context.Tag("@runbox/Git")<
           return exactNames.has(name) || path.startsWith(".agents/runbox/") ||
             (name.startsWith(".env") && name.endsWith(".example"))
         }).join("\n")
-        return createHash("sha256").update(setupEntries).digest("hex")
+        const hash = createHash("sha256").update(setupEntries)
+        if (state.source?.commit === commit) {
+          const patterns = [
+            ":(glob)**/package.json",
+            ":(glob)**/package-lock.json",
+            ":(glob)**/pnpm-lock.yaml",
+            ":(glob)**/yarn.lock",
+            ":(glob)**/bun.lock",
+            ":(glob)**/bun.lockb",
+            ":(glob)**/.npmrc",
+            ":(glob)**/.node-version",
+            ":(glob)**/.tool-versions",
+            ":(glob)**/pnpm-workspace.yaml",
+            ":(glob)**/turbo.json",
+            ":(glob)**/.env*.example",
+            ":(glob).agents/runbox/**",
+          ]
+          const diff = yield* runGit(state.runnerPath, ["diff", "--binary", commit, "--", ...patterns])
+          hash.update(diff.stdout)
+          const untracked = yield* runGit(state.runnerPath, [
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "-z",
+            "--",
+            ...patterns,
+          ])
+          const paths = untracked.stdout.split("\0").filter(Boolean).sort()
+          for (const path of paths) {
+            const absolute = join(state.runnerPath, path)
+            const stat = yield* Effect.promise(() => lstat(absolute))
+            hash.update(path).update(String(stat.mode))
+            if (stat.isSymbolicLink()) hash.update(yield* Effect.promise(() => readlink(absolute)))
+            else if (stat.isFile()) hash.update(yield* Effect.promise(() => readFile(absolute)))
+          }
+        }
+        return hash.digest("hex")
       })
 
       const validateEnvironmentSource = Effect.fn("Git.validateEnvironmentSource")(function* (
@@ -304,9 +367,15 @@ export class Git extends Context.Tag("@runbox/Git")<
           try: async () => {
             for (const relative of files) {
               const source = join(sourceRoot, relative)
-              const destination = join(state.runnerPath, relative)
-              if (!(await exists(source))) continue
+              const destination = await assertPhysicalPath(state.runnerPath, relative, "runner")
+              await assertPhysicalPath(sourceRoot, relative, "environment source")
+              const sourceStat = await lstat(source).catch((cause: NodeJS.ErrnoException) =>
+                cause.code === "ENOENT" ? null : Promise.reject(cause)
+              )
+              if (sourceStat === null) continue
+              if (!sourceStat.isFile()) throw new Error(`${relative} is not a regular environment file`)
               await mkdir(dirname(destination), { recursive: true })
+              await assertPhysicalPath(state.runnerPath, relative, "runner")
               await cp(source, destination)
             }
           },
@@ -318,6 +387,41 @@ export class Git extends Context.Tag("@runbox/Git")<
               suggestion: "Check the configured environment source and retry.",
             }),
         })
+      })
+
+      const sourceAt = Effect.fn("Git.sourceAt")(function* (path: string, expectedCommonDir: string) {
+        const sourcePath = yield* Effect.tryPromise({
+          try: () => realpath(path),
+          catch: (cause) => new RunboxError({
+            operation: "resolve synchronized source",
+            message: String(cause),
+            code: "SYNC_SOURCE_MISSING",
+            suggestion: "Restore the watched worktree or stop the watched command.",
+          }),
+        })
+        const root = (yield* runGit(sourcePath, ["rev-parse", "--show-toplevel"])).stdout.trim()
+        const commonRaw = (yield* runGit(sourcePath, ["rev-parse", "--git-common-dir"])).stdout.trim()
+        const common = resolve(isAbsolute(commonRaw) ? commonRaw : join(sourcePath, commonRaw))
+        if (common !== expectedCommonDir) {
+          return yield* new RunboxError({
+            operation: "resolve synchronized source",
+            message: `${sourcePath} belongs to another Git repository`,
+            code: "SYNC_SOURCE_MISMATCH",
+            suggestion: "Use a worktree from the active repository.",
+          })
+        }
+        const branch = (yield* runGit(sourcePath, ["branch", "--show-current"])).stdout.trim()
+        const commit = (yield* runGit(sourcePath, ["rev-parse", "HEAD"])).stdout.trim()
+        return {
+          kind: "worktree" as const,
+          worktreePath: yield* Effect.tryPromise({
+            try: () => realpath(root),
+            catch: (cause) => new RunboxError({ operation: "resolve synchronized root", message: String(cause) }),
+          }),
+          branch: branch || null,
+          commit,
+          stack: null,
+        }
       })
 
       return Git.of({
@@ -332,6 +436,7 @@ export class Git extends Context.Tag("@runbox/Git")<
         setupFingerprint,
         environmentSource,
         syncEnvironment,
+        sourceAt,
       })
     }),
   )

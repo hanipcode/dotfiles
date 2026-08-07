@@ -3,6 +3,7 @@ import { Context, Data, Effect, Either, Layer, Schema } from "effect"
 export class GhStackError extends Data.TaggedError("GhStackError")<{
   readonly code:
     | "git_failed"
+    | "gh_stack_failed"
     | "invalid_state"
     | "not_in_stack"
     | "ambiguous_stack"
@@ -67,6 +68,10 @@ export interface GhStackClient {
     readonly repoRoot: string
     readonly checkoutPaths: ReadonlyArray<string>
   }) => Effect.Effect<GhStackCatalog, GhStackError>
+  readonly checkoutBranch: (
+    projectDir: string,
+    branch: string,
+  ) => Effect.Effect<void, GhStackError>
 }
 
 export const GhStackClient = Context.GenericTag<GhStackClient>("@heherdr/GhStackClient")
@@ -150,6 +155,40 @@ const git = (cwd: string, args: ReadonlyArray<string>): Effect.Effect<string, Gh
               code: "git_failed",
               reason:
                 result.stderr.trim() || result.stdout.trim() || `git exited ${result.exitCode}`,
+            }),
+          ),
+  )
+
+const checkoutBranch = (cwd: string, branch: string): Effect.Effect<void, GhStackError> =>
+  Effect.flatMap(
+    Effect.tryPromise({
+      try: async () => {
+        const proc = Bun.spawn(["gh", "stack", "checkout", branch], {
+          cwd,
+          stdout: "pipe",
+          stderr: "pipe",
+        })
+        const [stdout, stderr, exitCode] = await Promise.all([
+          new Response(proc.stdout).text(),
+          new Response(proc.stderr).text(),
+          proc.exited,
+        ])
+        return { stdout, stderr, exitCode } satisfies GitOutput
+      },
+      catch: (cause) =>
+        new GhStackError({
+          code: "gh_stack_failed",
+          reason: `failed to spawn gh stack: ${String(cause)}`,
+        }),
+    }),
+    (result) =>
+      result.exitCode === 0
+        ? Effect.void
+        : Effect.fail(
+            new GhStackError({
+              code: "gh_stack_failed",
+              reason:
+                result.stderr.trim() || result.stdout.trim() || `gh stack exited ${result.exitCode}`,
             }),
           ),
   )
@@ -246,6 +285,7 @@ const make = (): GhStackClient => ({
 
       return { currentBranch, stacks: matches, localBranches }
     }),
+  checkoutBranch,
 })
 
 export const layer = Layer.sync(GhStackClient, make)

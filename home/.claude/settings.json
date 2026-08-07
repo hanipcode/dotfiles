@@ -95,5 +95,6 @@
   "tui": "default",
   "feedbackSurveyState": {
     "lastShownTime": 1754036707243
-  }
+  },
+  "skipDangerousModePermissionPrompt": true
 }

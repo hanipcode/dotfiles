@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import type { GhStackCatalog } from "@heherdr/framework/gh-stack/Client.ts"
 import type { WorktreeList } from "@heherdr/framework/herdr/Client.ts"
-import { buildStackNavigatorData } from "./model.ts"
+import { buildStackNavigatorData, stackTipRow } from "./model.ts"
 
 const catalog: GhStackCatalog = {
   currentBranch: "api",
@@ -56,6 +56,7 @@ describe("stack navigator model", () => {
     const data = buildStackNavigatorData(catalog, worktrees)
 
     expect(data.stacks[0]?.label).toBe("stack #7  main → merged")
+    expect(data.currentWorktreePath).toBe("/repo")
     expect(data.stacks[0]?.rows.map((row) => row.branch)).toEqual([
       "merged",
       "api",
@@ -74,5 +75,11 @@ describe("stack navigator model", () => {
     expect(rows.find((row) => row.branch === "auth")?.canCreateWorktree).toBe(true)
     expect(rows.find((row) => row.branch === "merged")?.canCreateWorktree).toBe(false)
     expect(rows.find((row) => row.branch === "api")?.canCreateWorktree).toBe(false)
+  })
+
+  it("selects the highest unmerged branch as the stack tip", () => {
+    const stack = buildStackNavigatorData(catalog, worktrees).stacks[0]
+
+    expect(stack === undefined ? undefined : stackTipRow(stack)?.branch).toBe("api")
   })
 })

@@ -5,7 +5,15 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import { randomUUID } from "node:crypto"
 import { parseEnv } from "node:util"
-import type { CommandRecord, ProjectContext, RepoSnapshot, RepoState, SourceRef } from "../domain.ts"
+import type {
+  CommandRecord,
+  ForwardResult,
+  ForwardStart,
+  ProjectContext,
+  RepoSnapshot,
+  RepoState,
+  SourceRef,
+} from "../domain.ts"
 import { commandId } from "../domain.ts"
 import { RunboxError, ScriptNotFound } from "../errors.ts"
 import { LogStore } from "./LogStore.ts"
@@ -13,6 +21,8 @@ import { Metrics } from "./Metrics.ts"
 import { Paths } from "./Paths.ts"
 import { Project } from "./Project.ts"
 import { StateStore } from "./StateStore.ts"
+import { Shell } from "./Shell.ts"
+import { SourceSync } from "./SourceSync.ts"
 
 const activeStatuses = new Set(["preparing", "starting", "running", "stopping"])
 const startupGraceMs = Number.isFinite(Number(process.env.RUNBOX_STARTUP_GRACE_MS))
@@ -58,6 +68,11 @@ export interface PreparedCommand {
   readonly created: boolean
 }
 
+export interface ForwardObserver {
+  readonly onStart: (start: ForwardStart) => void
+  readonly onOutput: (stream: "stdout" | "stderr", text: string) => void
+}
+
 const elapsedSeconds = (value: string): number => {
   const dayParts = value.trim().split("-")
   const days = dayParts.length === 2 ? Number(dayParts[0]) : 0
@@ -100,6 +115,7 @@ export class Supervisor extends Context.Tag("@runbox/Supervisor")<
       script: string,
       args: ReadonlyArray<string>,
       message: string,
+      sourceWatch?: boolean,
       expectedToken?: string,
     ) => Effect.Effect<PreparedCommand, RunboxError>
     readonly updatePreparation: (
@@ -120,7 +136,13 @@ export class Supervisor extends Context.Tag("@runbox/Supervisor")<
     readonly setSource: (source: SourceRef) => Effect.Effect<void, RunboxError>
     readonly markPrepared: (commit: string) => Effect.Effect<void, RunboxError>
     readonly markCommandPrepared: (key: string) => Effect.Effect<void, RunboxError>
+    readonly invalidatePreparation: (commit: string) => Effect.Effect<void, RunboxError>
     readonly setEnvironmentSourceRoot: (root: string) => Effect.Effect<void, RunboxError>
+    readonly forward: (
+      packagePath: string,
+      argv: ReadonlyArray<string>,
+      observer: ForwardObserver,
+    ) => Effect.Effect<ForwardResult, RunboxError>
   }
 >() {
   static layer = (project: ProjectContext, initial: RepoState) =>
@@ -132,8 +154,11 @@ export class Supervisor extends Context.Tag("@runbox/Supervisor")<
         const logs = yield* LogStore
         const metrics = yield* Metrics
         const paths = yield* Paths
+        const shell = yield* Shell
+        const sourceSync = yield* SourceSync
         const runtime = yield* Effect.runtime<never>()
         const runFork = Runtime.runFork(runtime)
+        const runPromise = Runtime.runPromise(runtime)
         const stateRef = yield* Ref.make(initial)
         const stateMutex = yield* Effect.makeSemaphore(1)
         const children = new Map<string, { readonly token: string; readonly child: ChildProcess }>()
@@ -256,12 +281,17 @@ export class Supervisor extends Context.Tag("@runbox/Supervisor")<
           script: string,
           args: ReadonlyArray<string>,
           message: string,
+          sourceWatch = false,
           expectedToken?: string,
         ) {
           const id = commandId(packagePath, script)
           const state = yield* Ref.get(stateRef)
           const existing = state.commands[id]
           if (expectedToken === undefined && existing !== undefined && activeStatuses.has(existing.status)) {
+            if (sourceWatch && !existing.sourceWatch) {
+              const next = yield* updateCommand(id, (record) => ({ ...record, sourceWatch: true }))
+              return { record: next.commands[id] ?? existing, created: false }
+            }
             return { record: existing, created: false }
           }
           if (expectedToken !== undefined && existing?.processToken !== expectedToken) {
@@ -288,6 +318,7 @@ export class Supervisor extends Context.Tag("@runbox/Supervisor")<
             message,
             logFile,
             processToken: token,
+            sourceWatch,
           }
           yield* persist((current) => ({
             ...current,
@@ -410,6 +441,7 @@ export class Supervisor extends Context.Tag("@runbox/Supervisor")<
             message: null,
             logFile,
             processToken,
+            sourceWatch: existing.sourceWatch,
           }
           yield* persist((current) => ({
             ...current,
@@ -430,7 +462,11 @@ export class Supervisor extends Context.Tag("@runbox/Supervisor")<
           const id = commandId(packagePath, script)
           const state = yield* Ref.get(stateRef)
           const record = state.commands[id]
-          if (record === undefined || !activeStatuses.has(record.status)) return
+          if (record === undefined) return
+          if (!activeStatuses.has(record.status)) {
+            if (record.sourceWatch) yield* updateCommand(id, (value) => ({ ...value, sourceWatch: false }))
+            return
+          }
           if (record.processToken !== null) requestedStops.add(record.processToken)
           yield* updateCommand(id, (value) => ({ ...value, status: "stopping" }))
           const pid = record.pid
@@ -457,7 +493,13 @@ export class Supervisor extends Context.Tag("@runbox/Supervisor")<
           else if (record.processToken !== null) requestedStops.delete(record.processToken)
           const latest = (yield* Ref.get(stateRef)).commands[id]
           if (latest?.status === "stopping") {
-            yield* updateCommand(id, (value) => ({ ...value, status: "completed", pid: null, message: "stopped" }))
+            yield* updateCommand(id, (value) => ({
+              ...value,
+              status: "completed",
+              pid: null,
+              message: "stopped",
+              sourceWatch: false,
+            }))
           }
         })
 
@@ -468,6 +510,15 @@ export class Supervisor extends Context.Tag("@runbox/Supervisor")<
             concurrency: 1,
             discard: true,
           })
+          yield* persist((current) => ({
+            ...current,
+            commands: Object.fromEntries(
+              Object.entries(current.commands).map(([id, record]) => [
+                id,
+                record.sourceWatch ? { ...record, sourceWatch: false } : record,
+              ]),
+            ),
+          }))
           return active
         })
 
@@ -507,6 +558,7 @@ export class Supervisor extends Context.Tag("@runbox/Supervisor")<
             packagePath,
             logs: outputLogs,
             metrics: commandMetrics,
+            sync: yield* sourceSync.snapshot,
           }
         })
 
@@ -529,8 +581,133 @@ export class Supervisor extends Context.Tag("@runbox/Supervisor")<
               : [...state.preparedCommands, key],
           }))
         })
+        const invalidatePreparation = Effect.fn("Supervisor.invalidatePreparation")(function* (commit: string) {
+          yield* persist((state) => ({
+            ...state,
+            preparedCommits: state.preparedCommits.filter((value) => value !== commit),
+            preparedCommands: state.preparedCommands.filter((value) => !value.startsWith(`${commit}:`)),
+          }))
+        })
         const setEnvironmentSourceRoot = Effect.fn("Supervisor.setEnvironmentSourceRoot")(function* (root: string) {
           yield* persist((state) => ({ ...state, environmentSourceRoot: root }))
+        })
+
+        const forward = Effect.fn("Supervisor.forward")(function* (
+          packagePath: string,
+          argv: ReadonlyArray<string>,
+          observer: ForwardObserver,
+        ) {
+          const state = yield* Ref.get(stateRef)
+          if (state.source === null) {
+            return yield* new RunboxError({
+              operation: "forward command",
+              message: "runner has no active source",
+              code: "RUNNER_NOT_INITIALIZED",
+              suggestion: "Run 'runbox init' or start a package command, then retry.",
+            })
+          }
+          const executable = argv[0]
+          if (executable === undefined) {
+            return yield* new RunboxError({
+              operation: "forward command",
+              message: "the forwarded command is empty",
+              code: "INVALID_ARGUMENT",
+              suggestion: "Pass the complete command, for example 'runbox forward pnpm install'.",
+            })
+          }
+          const cwd = join(state.runnerPath, packagePath)
+          const invocationId = randomUUID()
+          const startedAt = Date.now()
+          const logFile = join(paths.repoState(state.repoId), "logs", "forward.log")
+          const start: ForwardStart = {
+            invocationId,
+            argv: [...argv],
+            cwd,
+            sourceCommit: state.source.commit,
+            startedAt,
+            logFile,
+          }
+
+          const warnings: Array<{ code: string; message: string }> = []
+          const header = `\n[runbox forward ${invocationId}] ${JSON.stringify({
+            argv,
+            cwd,
+            sourceCommit: state.source.commit,
+            startedAt,
+          })}\n`
+          const initialLog = yield* logs.append(logFile, header).pipe(Effect.either)
+          if (initialLog._tag === "Left") {
+            warnings.push({ code: "FORWARD_LOG_INCOMPLETE", message: initialLog.left.message })
+          }
+          let logQueue = Promise.resolve()
+          let logFailure: string | null = null
+          const appendLog = (text: string) => {
+            logQueue = logQueue.then(() => runPromise(logs.append(logFile, text))).catch((cause) => {
+              logFailure = String(cause)
+            })
+          }
+          const env = yield* Effect.tryPromise({
+            try: () => commandEnvironment(state.runnerPath, cwd),
+            catch: (cause) => new RunboxError({
+              operation: "load forwarded command environment",
+              message: String(cause),
+              code: "FORWARD_ENVIRONMENT_FAILED",
+              suggestion: "Check the selected package path and its .env files, then retry.",
+              retryable: true,
+              details: JSON.stringify({ invocationId, argv, cwd, started: false }),
+            }),
+          })
+          const output = yield* shell.run(argv, {
+            cwd,
+            env,
+            allowFailure: true,
+            onStart: () => observer.onStart(start),
+            onStdout: (text) => {
+              observer.onOutput("stdout", text)
+              appendLog(text)
+            },
+            onStderr: (text) => {
+              observer.onOutput("stderr", text)
+              appendLog(text)
+            },
+          }).pipe(
+            Effect.mapError((error) => {
+              const executableMissing = error.exitCode === -1 && (
+                error.stderr.toLowerCase().includes("enoent") ||
+                error.stderr.toLowerCase().includes("executable not found")
+              )
+              return new RunboxError({
+                operation: "start forwarded command",
+                message: error.stderr,
+                code: executableMissing ? "FORWARD_EXECUTABLE_NOT_FOUND" : "FORWARD_START_FAILED",
+                suggestion: executableMissing
+                  ? `Ensure '${executable}' is installed in the managed runner or pass an executable path.`
+                  : "Inspect the forward log and run 'runbox doctor --json' before retrying.",
+                details: JSON.stringify({ invocationId, argv, cwd, started: false }),
+              })
+            }),
+          )
+          const finishedAt = Date.now()
+          const signal = output.signal ?? null
+          appendLog(`\n[runbox forward ${invocationId}] ${JSON.stringify({
+            exitCode: output.exitCode,
+            signal,
+            durationMs: finishedAt - startedAt,
+            finishedAt,
+          })}\n`)
+          yield* Effect.promise(() => logQueue)
+          if (logFailure !== null && !warnings.some((warning) => warning.code === "FORWARD_LOG_INCOMPLETE")) {
+            warnings.push({ code: "FORWARD_LOG_INCOMPLETE", message: logFailure })
+          }
+          return {
+            ...start,
+            started: true as const,
+            finishedAt,
+            durationMs: finishedAt - startedAt,
+            exitCode: output.exitCode,
+            signal,
+            warnings,
+          }
         })
 
         const stalePids = Object.values(initial.commands).flatMap((record) =>
@@ -598,7 +775,9 @@ export class Supervisor extends Context.Tag("@runbox/Supervisor")<
           setSource,
           markPrepared,
           markCommandPrepared,
+          invalidatePreparation,
           setEnvironmentSourceRoot,
+          forward,
         })
       }),
     )

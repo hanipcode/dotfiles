@@ -1,5 +1,6 @@
 import { Context, Effect, Layer } from "effect"
 import { spawn } from "node:child_process"
+import { constants } from "node:os"
 import { CommandFailed } from "../errors.ts"
 
 export interface RunOptions {
@@ -7,6 +8,7 @@ export interface RunOptions {
   readonly env?: Readonly<Record<string, string | undefined>>
   readonly allowFailure?: boolean
   readonly timeoutMs?: number
+  readonly onStart?: () => void
   readonly onStdout?: (chunk: string) => void
   readonly onStderr?: (chunk: string) => void
 }
@@ -15,7 +17,11 @@ export interface CommandOutput {
   readonly stdout: string
   readonly stderr: string
   readonly exitCode: number
+  readonly signal?: NodeJS.Signals | null
 }
+
+const signalExitCode = (signal: NodeJS.Signals): number =>
+  128 + (constants.signals[signal] ?? 0)
 
 export class Shell extends Context.Tag("@runbox/Shell")<
   Shell,
@@ -33,8 +39,8 @@ export class Shell extends Context.Tag("@runbox/Shell")<
         command: ReadonlyArray<string>,
         options: RunOptions,
       ) {
-        const [stdout, stderr, exitCode] = yield* Effect.async<
-          readonly [string, string, number],
+        const [stdout, stderr, exitCode, signal] = yield* Effect.async<
+          readonly [string, string, number, NodeJS.Signals | null],
           CommandFailed
         >((resume) => {
           const [executable, ...args] = command
@@ -77,7 +83,7 @@ export class Shell extends Context.Tag("@runbox/Shell")<
             }, 1_000)
             killTimer.unref()
           }
-          const finish = (effect: Effect.Effect<readonly [string, string, number], CommandFailed>) => {
+          const finish = (effect: Effect.Effect<readonly [string, string, number, NodeJS.Signals | null], CommandFailed>) => {
             if (settled) return
             settled = true
             if (timeout !== undefined) clearTimeout(timeout)
@@ -91,15 +97,21 @@ export class Shell extends Context.Tag("@runbox/Shell")<
             stderr += chunk
             options.onStderr?.(chunk)
           })
+          child.once("spawn", () => options.onStart?.())
           child.once("error", (cause) => finish(Effect.fail(new CommandFailed({
             command: command.join(" "),
             cwd: options.cwd,
             exitCode: -1,
             stderr: String(cause),
           }))))
-          child.once("close", (code) => {
+          child.once("close", (code, signal) => {
             if (killTimer !== undefined) clearTimeout(killTimer)
-            finish(Effect.succeed([stdout, stderr, code ?? -1]))
+            finish(Effect.succeed([
+              stdout,
+              stderr,
+              code ?? (signal === null ? -1 : signalExitCode(signal)),
+              signal,
+            ]))
           })
           const timeout = options.timeoutMs === undefined
             ? undefined
@@ -127,7 +139,7 @@ export class Shell extends Context.Tag("@runbox/Shell")<
             stderr: stderr.trim(),
           })
         }
-        return { stdout, stderr, exitCode }
+        return { stdout, stderr, exitCode, signal }
       }),
     }),
   )

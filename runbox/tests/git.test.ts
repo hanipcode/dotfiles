@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest"
 import { Effect } from "effect"
-import { access, mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises"
+import { access, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { spawnSync } from "node:child_process"
@@ -86,6 +86,32 @@ describe("Git managed runner", () => {
       expect(yield* Effect.promise(() => readFile(join(runnerPath, ".env"), "utf8"))).toBe("SECRET=refreshed\n")
       expect(yield* Effect.promise(() => readFile(join(runnerPath, ".env.generated"), "utf8")))
         .toBe("GENERATED=runner\n")
+
+      const outside = yield* Effect.promise(() => mkdtemp(join(tmpdir(), "runbox-env-outside-")))
+      const outsideEnvironment = join(outside, ".env.outside")
+      const sourceEnvironment = join(root, "packages", "service", ".env.staging")
+      yield* Effect.promise(() => writeFile(outsideEnvironment, "OUTSIDE=secret\n"))
+      yield* Effect.promise(() => rm(sourceEnvironment))
+      yield* Effect.promise(() => symlink(outsideEnvironment, sourceEnvironment))
+      const unsafeEnvironmentSource = yield* Effect.either(gitService.syncEnvironment(configuredState))
+      expect(unsafeEnvironmentSource._tag).toBe("Left")
+      if (unsafeEnvironmentSource._tag === "Left") {
+        expect(unsafeEnvironmentSource.left.code).toBe("ENVIRONMENT_SYNC_FAILED")
+      }
+      yield* Effect.promise(() => rm(sourceEnvironment))
+      yield* Effect.promise(() => writeFile(sourceEnvironment, "TOKEN=nested\n"))
+
+      yield* Effect.promise(() => rm(join(runnerPath, "packages"), { recursive: true }))
+      yield* Effect.promise(() => symlink(outside, join(runnerPath, "packages")))
+      const unsafeEnvironmentSync = yield* Effect.either(gitService.syncEnvironment(configuredState))
+      expect(unsafeEnvironmentSync._tag).toBe("Left")
+      if (unsafeEnvironmentSync._tag === "Left") {
+        expect(unsafeEnvironmentSync.left.code).toBe("ENVIRONMENT_SYNC_FAILED")
+      }
+      expect(yield* Effect.promise(() => access(join(outside, "service", ".env.staging")).then(
+        () => true,
+        () => false,
+      ))).toBe(false)
       expect(yield* Effect.promise(() => access(join(root, ".git")))).toBeUndefined()
     }).pipe(Effect.provide(CoreLayer)),
   )

@@ -84,7 +84,7 @@ describe("TUI activation", () => {
 
     expect(result.status).not.toBeNull()
     expect(output).not.toContain("RUNNER_SOURCE_MISMATCH")
-    expect(output).toContain("retained output")
+    expect(output).toContain(" logs")
     const status = run(feature, env, "status", "--json")
     expect(status.status, status.stderr).toBe(0)
     expect(JSON.parse(status.stdout).data.state.source).toMatchObject({

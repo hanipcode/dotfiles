@@ -1,12 +1,13 @@
 import { useCallback, useMemo, useRef, useState } from "react"
 import { theme, useExit, useModal, type ModeSpec } from "@heherdr/framework"
-import type { StackBranchRow, StackNavigatorData } from "./model.ts"
+import { stackTipRow, type StackBranchRow, type StackNavigatorData } from "./model.ts"
 
 type Mode = "normal" | "filter"
 
 export type StackNavigatorAction =
   | { readonly type: "open"; readonly row: StackBranchRow }
   | { readonly type: "create"; readonly row: StackBranchRow }
+  | { readonly type: "switch"; readonly row: StackBranchRow }
 
 export interface StackUiProps {
   readonly data: StackNavigatorData
@@ -92,6 +93,24 @@ export const StackUi = ({ data, onAction, onRefresh }: StackUiProps) => {
     exit()
   }, [selectedRow, onAction, exit])
 
+  const switchTo = useCallback(
+    (row: StackBranchRow | undefined) => {
+      if (row === undefined) return
+      if (!row.localBranchExists) {
+        setStatus("branch no longer exists locally")
+        return
+      }
+      onAction({ type: "switch", row })
+      exit()
+    },
+    [onAction, exit],
+  )
+
+  const switchToTip = useCallback(() => {
+    const stack = stackIndex === null ? undefined : list.stacks[stackIndex]
+    switchTo(stack === undefined ? undefined : stackTipRow(stack))
+  }, [stackIndex, list.stacks, switchTo])
+
   const refresh = useCallback(() => {
     if (busy) return
     setBusy(true)
@@ -141,6 +160,8 @@ export const StackUi = ({ data, onAction, onRefresh }: StackUiProps) => {
           "/": { description: "filter", run: () => setModeRef.current("filter") },
           return: { description: choosingStack ? "select" : "open", run: choose },
           c: { description: "create worktree", run: create, hidden: choosingStack },
+          s: { description: "switch", run: () => switchTo(selectedRow), hidden: choosingStack },
+          t: { description: "switch to tip", run: switchToTip, hidden: choosingStack },
           r: { description: "reload", run: refresh },
           q: { description: "quit", run: exit },
           escape: { description: choosingStack ? "quit" : "back", run: back, hidden: true },
@@ -156,7 +177,19 @@ export const StackUi = ({ data, onAction, onRefresh }: StackUiProps) => {
         },
       },
     }),
-    [move, visibleLength, choosingStack, choose, create, refresh, exit, back],
+    [
+      move,
+      visibleLength,
+      choosingStack,
+      choose,
+      create,
+      switchTo,
+      selectedRow,
+      switchToTip,
+      refresh,
+      exit,
+      back,
+    ],
   )
 
   const modal = useModal<Mode>({ initial: "normal", modes })

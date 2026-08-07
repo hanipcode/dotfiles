@@ -1,20 +1,23 @@
-import { Context, Effect, Fiber, Layer } from "effect"
+import { Context, Effect, Fiber, Layer, Runtime } from "effect"
 import { access } from "node:fs/promises"
 import { join } from "node:path"
 import { randomUUID } from "node:crypto"
-import { commandId, sameSource, type CommandRecord, type ProjectContext, type RepoState, type SourceRef } from "../domain.ts"
+import { commandId, sameSource, type CommandRecord, type ProjectContext, type RepoState, type SourceRef, type SyncResult } from "../domain.ts"
 import { RunboxError, toErrorInfo } from "../errors.ts"
 import { Agent } from "./Agent.ts"
 import { Git } from "./Git.ts"
 import { LogStore } from "./LogStore.ts"
 import { Paths } from "./Paths.ts"
 import { PreparationMemory } from "./PreparationMemory.ts"
-import { Supervisor } from "./Supervisor.ts"
+import { Supervisor, type ForwardObserver } from "./Supervisor.ts"
+import type { ForwardResult } from "../domain.ts"
+import { SourceSync } from "./SourceSync.ts"
 
 const exists = (path: string) => access(path).then(() => true, () => false)
 const stabilizationMs = Number.isFinite(Number(process.env.RUNBOX_STABILIZATION_MS))
   ? Math.max(0, Number(process.env.RUNBOX_STABILIZATION_MS))
   : 180_000
+const activeStatuses = new Set(["preparing", "starting", "running", "stopping"])
 
 interface LaunchJob {
   readonly token: string
@@ -33,6 +36,7 @@ export class Workflow extends Context.Tag("@runbox/Workflow")<
       packagePath: string,
       script: string,
       args: ReadonlyArray<string>,
+      watch?: boolean,
     ) => Effect.Effect<CommandRecord, RunboxError>
     readonly stop: (packagePath: string, script: string) => Effect.Effect<void, RunboxError>
     readonly stopAll: () => Effect.Effect<ReadonlyArray<CommandRecord>, RunboxError>
@@ -42,7 +46,15 @@ export class Workflow extends Context.Tag("@runbox/Workflow")<
       packagePath: string,
       script: string,
       args: ReadonlyArray<string>,
+      watch?: boolean,
     ) => Effect.Effect<CommandRecord, RunboxError>
+    readonly sync: (source: SourceRef, packagePath: string) => Effect.Effect<SyncResult, RunboxError>
+    readonly forward: (
+      source: SourceRef,
+      packagePath: string,
+      argv: ReadonlyArray<string>,
+      observer: ForwardObserver,
+    ) => Effect.Effect<ForwardResult, RunboxError>
   }
 >() {
   static layer = (project: ProjectContext) =>
@@ -55,7 +67,16 @@ export class Workflow extends Context.Tag("@runbox/Workflow")<
         const logs = yield* LogStore
         const paths = yield* Paths
         const memory = yield* PreparationMemory
+        const sourceSync = yield* SourceSync
+        const runtime = yield* Effect.runtime<never>()
+        const runFork = Runtime.runFork(runtime)
+        const mutation = yield* Effect.makeSemaphore(1)
         const jobs = new Map<string, LaunchJob>()
+        let watchGuard: Fiber.RuntimeFiber<void, never> | null = null
+        let watchSyncFiber: Fiber.RuntimeFiber<void, never> | null = null
+        let watchSyncRunning = false
+        let watchSyncPending = false
+        let closing = false
 
         const recordReuse = Effect.fn("Workflow.recordPreparationReuse")(function* (
           state: RepoState,
@@ -224,6 +245,7 @@ export class Workflow extends Context.Tag("@runbox/Workflow")<
                 script,
                 args,
                 `repairing startup with Luna (${attempt + 1}/3)`,
+                (yield* supervisor.state).commands[id]?.sourceWatch ?? false,
                 token,
               )
               token = repair.record.processToken ?? token
@@ -244,6 +266,7 @@ export class Workflow extends Context.Tag("@runbox/Workflow")<
           packagePath: string,
           script: string,
           args: ReadonlyArray<string>,
+          watch = false,
         ) {
           const state = yield* supervisor.state
           if (state.source !== null && !sameSource(state.source, source)) {
@@ -252,7 +275,7 @@ export class Workflow extends Context.Tag("@runbox/Workflow")<
               message: `runner is on ${state.source.branch ?? "detached"}@${state.source.commit.slice(0, 8)}, not ${source.branch ?? "detached"}@${source.commit.slice(0, 8)}; run 'runbox switch' first`,
             })
           }
-          const queued = yield* supervisor.prepare(packagePath, script, args, "queued for preparation")
+          const queued = yield* supervisor.prepare(packagePath, script, args, "queued for preparation", watch)
           if (!queued.created) return queued.record
           const token = queued.record.processToken
           if (token === null) {
@@ -261,6 +284,7 @@ export class Workflow extends Context.Tag("@runbox/Workflow")<
           const id = queued.record.id
           jobs.set(id, { token, fiber: null })
           const fiber = yield* runLifecycle(source, packagePath, script, args, token).pipe(
+            Effect.interruptible,
             Effect.ensuring(Effect.sync(() => {
               if (jobs.get(id)?.token === token) jobs.delete(id)
             })),
@@ -288,7 +312,10 @@ export class Workflow extends Context.Tag("@runbox/Workflow")<
             { concurrency: "unbounded", discard: true },
           )
           jobs.clear()
-          return yield* supervisor.stopAll()
+          const watcherStop = yield* Effect.either(sourceSync.unwatch)
+          const stopped = yield* supervisor.stopAll()
+          if (watcherStop._tag === "Left") return yield* watcherStop.left
+          return stopped
         })
 
         const waitUntilStarted = Effect.fn("Workflow.waitUntilStarted")(function* (id: string) {
@@ -314,13 +341,202 @@ export class Workflow extends Context.Tag("@runbox/Workflow")<
           })
         })
 
+        const watchedCommands = Effect.fn("Workflow.watchedCommands")(function* () {
+          const state = yield* supervisor.state
+          return Object.values(state.commands).filter((record) =>
+            record.sourceWatch && activeStatuses.has(record.status)
+          )
+        })
+
+        const startWatchGuard = Effect.fn("Workflow.startWatchGuard")(function* () {
+          if (watchGuard !== null) return
+          watchGuard = yield* Effect.gen(function* () {
+            while (true) {
+              yield* Effect.sleep("500 millis")
+              const stopped = yield* mutation.withPermits(1)(Effect.gen(function* () {
+                if ((yield* watchedCommands()).length > 0) return false
+                return yield* sourceSync.unwatch.pipe(
+                  Effect.as(true),
+                  Effect.catchAll(() => Effect.succeed(false)),
+                )
+              }))
+              if (stopped) return
+            }
+          }).pipe(
+            Effect.interruptible,
+            Effect.ensuring(Effect.sync(() => { watchGuard = null })),
+            Effect.forkDaemon,
+          )
+        })
+
+        const syncFailure = (error: unknown) =>
+          logs.append(join(paths.repoState(project.repoId), "logs", "sync.log"), `${JSON.stringify({
+            at: Date.now(),
+            phase: "failed",
+            error: toErrorInfo(error),
+          })}\n`).pipe(Effect.catchAll(() => Effect.void))
+
+        let watchSource: (source: SourceRef, packagePath: string) => Effect.Effect<void, RunboxError>
+
+        const movingSyncInternal = Effect.fn("Workflow.movingSyncInternal")(function* (
+          source: SourceRef,
+          packagePath: string,
+          _enableWatch: boolean,
+        ) {
+          const state = yield* supervisor.state
+          const previous = state.source
+          const sourceChanged = previous === null || !sameSource(previous, source)
+          const keepWatching = _enableWatch || (yield* watchedCommands()).length > 0
+          const restartRecords = sourceChanged
+            ? Object.values(state.commands).filter((record) =>
+                activeStatuses.has(record.status) && !record.sourceWatch
+              )
+            : []
+          const stopForMove = Effect.forEach(restartRecords, (record) =>
+            cancel(record.id).pipe(Effect.zipRight(supervisor.stop(record.packagePath, record.script))), {
+            concurrency: 1,
+            discard: true,
+          })
+          const restartedDuringMove = new Set<string>()
+          const restartAfterMove = (target: SourceRef, track: boolean) => Effect.forEach(restartRecords, (record) =>
+            schedule(target, record.packagePath, record.script, record.args, false).pipe(
+              Effect.tap((queued) => Effect.sync(() => {
+                if (track) restartedDuringMove.add(queued.id)
+              })),
+              Effect.flatMap((queued) => waitUntilStarted(queued.id)),
+            ), {
+            concurrency: 1,
+            discard: true,
+          })
+          const apply = Effect.gen(function* () {
+            if (sourceChanged) {
+              yield* stopForMove
+              yield* sourceSync.unwatch
+              yield* git.checkout(state, source)
+              yield* supervisor.setSource(source)
+              yield* git.updateSubmodules(state)
+              yield* git.syncEnvironment({ ...state, source })
+            }
+            const result = yield* sourceSync.reconcile(source)
+            if (result.setupChanged) yield* supervisor.invalidatePreparation(source.commit)
+            if (keepWatching) yield* watchSource(source, packagePath)
+            yield* restartAfterMove(source, true)
+            return result
+          })
+          return yield* Effect.uninterruptible(apply.pipe(Effect.catchAll((error) => {
+            if (!sourceChanged || previous === null) return Effect.fail(error)
+            return Effect.gen(function* () {
+              const rollback = yield* Effect.gen(function* () {
+                yield* Effect.forEach(restartRecords.filter((record) => restartedDuringMove.has(record.id)), (record) =>
+                  cancel(record.id).pipe(Effect.zipRight(supervisor.stop(record.packagePath, record.script))), {
+                  concurrency: 1,
+                  discard: true,
+                })
+                restartedDuringMove.clear()
+                let rollbackSource = previous
+                if (previous.kind === "worktree" && previous.worktreePath !== null) {
+                  rollbackSource = yield* git.sourceAt(previous.worktreePath, project.commonDir)
+                }
+                yield* sourceSync.unwatch
+                yield* git.checkout(state, rollbackSource)
+                yield* supervisor.setSource(rollbackSource)
+                yield* git.updateSubmodules(state)
+                yield* git.syncEnvironment({ ...state, source: rollbackSource })
+                if (rollbackSource.kind === "worktree") {
+                  yield* sourceSync.reconcile(rollbackSource)
+                  if (keepWatching) yield* watchSource(rollbackSource, packagePath)
+                }
+                yield* restartAfterMove(rollbackSource, false)
+              }).pipe(Effect.either)
+              if (rollback._tag === "Left") {
+                yield* supervisor.stopAll().pipe(Effect.catchAll(() => Effect.succeed([])))
+                return yield* new RunboxError({
+                  operation: "rollback synchronized source",
+                  message: "source activation failed and the previous source could not be restored",
+                  code: "SYNC_ROLLBACK_FAILED",
+                  suggestion: "Inspect 'runbox logs sync --json', repair the source worktree, then run 'runbox sync --json'.",
+                  details: JSON.stringify({
+                    activationError: toErrorInfo(error),
+                    rollbackError: toErrorInfo(rollback.left),
+                  }),
+                })
+              }
+              return yield* error
+            })
+          })))
+        })
+
+        const handleInvalidation = (sourcePath: string, packagePath: string) => {
+          if (closing) return
+          if (watchSyncRunning) {
+            watchSyncPending = true
+            return
+          }
+          watchSyncRunning = true
+          watchSyncFiber = runFork(Effect.gen(function* () {
+            do {
+              watchSyncPending = false
+              yield* mutation.withPermits(1)(Effect.gen(function* () {
+                const state = yield* supervisor.state
+                if (state.source?.kind !== "worktree" || state.source.worktreePath !== sourcePath) return
+                const next = yield* git.sourceAt(sourcePath, project.commonDir)
+                yield* movingSyncInternal(next, packagePath, true)
+              }).pipe(Effect.tapError(syncFailure), Effect.catchAll(() => Effect.void)))
+            } while (watchSyncPending)
+          }).pipe(Effect.ensuring(Effect.sync(() => {
+            watchSyncRunning = false
+            watchSyncFiber = null
+            if (!closing && watchSyncPending) {
+              watchSyncPending = false
+              queueMicrotask(() => handleInvalidation(sourcePath, packagePath))
+            }
+          }))))
+        }
+
+        watchSource = Effect.fn("Workflow.watchSource")(function* (
+          source: SourceRef,
+          packagePath: string,
+        ) {
+          if (source.kind !== "worktree" || source.worktreePath === null) {
+            yield* sourceSync.unwatch
+            return
+          }
+          const sourcePath = source.worktreePath
+          yield* sourceSync.watch(source, () => handleInvalidation(sourcePath, packagePath))
+          const result = yield* sourceSync.reconcile(source).pipe(Effect.tapError(() =>
+            watchedCommands().pipe(
+              Effect.flatMap((owners) => owners.length === 0 ? sourceSync.unwatch : Effect.void),
+              Effect.catchAll(() => Effect.void),
+            )
+          ))
+          if (result.setupChanged) yield* supervisor.invalidatePreparation(source.commit)
+        })
+
+        const cleanupUnownedWatcher = () => watchedCommands().pipe(
+          Effect.flatMap((owners) => owners.length === 0 ? sourceSync.unwatch : Effect.void),
+          Effect.catchAll(() => Effect.void),
+        )
+
+        const sync = Effect.fn("Workflow.sync")(function* (
+          source: SourceRef,
+          packagePath: string,
+        ) {
+          return yield* mutation.withPermits(1)(movingSyncInternal(source, packagePath, false))
+        })
+
         const start = Effect.fn("Workflow.start")(function* (
           source: SourceRef,
           packagePath: string,
           script: string,
           args: ReadonlyArray<string>,
+          watch = false,
         ) {
-          return yield* schedule(source, packagePath, script, args)
+          return yield* Effect.uninterruptible(Effect.gen(function* () {
+            if (watch) yield* mutation.withPermits(1)(movingSyncInternal(source, packagePath, true))
+            const record = yield* schedule(source, packagePath, script, args, watch)
+            if (watch) yield* startWatchGuard()
+            return record
+          }).pipe(Effect.tapError(() => watch ? cleanupUnownedWatcher() : Effect.void)))
         })
 
         const setup = Effect.fn("Workflow.setup")(function* (
@@ -337,7 +553,7 @@ export class Workflow extends Context.Tag("@runbox/Workflow")<
           yield* prepareCommit(source, packagePath)
         })
 
-        const switchTo = Effect.fn("Workflow.switchTo")(function* (source: SourceRef) {
+        const switchToInternal = Effect.fn("Workflow.switchToInternal")(function* (source: SourceRef) {
           const active = yield* stopAll()
           const state = yield* supervisor.state
           yield* git.checkout(state, source)
@@ -345,9 +561,19 @@ export class Workflow extends Context.Tag("@runbox/Workflow")<
           yield* git.updateSubmodules(state)
           yield* prepareCommit(source, active[0]?.packagePath ?? project.packagePath)
           for (const record of active) {
-            const queued = yield* schedule(source, record.packagePath, record.script, record.args)
+            const queued = yield* schedule(source, record.packagePath, record.script, record.args, record.sourceWatch)
             yield* waitUntilStarted(queued.id)
           }
+          const watched = active.find((record) => record.sourceWatch)
+          if (watched !== undefined && source.kind === "worktree") {
+            yield* sourceSync.reconcile(source)
+            yield* watchSource(source, watched.packagePath)
+            yield* startWatchGuard()
+          }
+        })
+
+        const switchTo = Effect.fn("Workflow.switchTo")(function* (source: SourceRef) {
+          yield* mutation.withPermits(1)(switchToInternal(source))
         })
 
         const activate = Effect.fn("Workflow.activate")(function* (
@@ -355,23 +581,77 @@ export class Workflow extends Context.Tag("@runbox/Workflow")<
           packagePath: string,
           script: string,
           args: ReadonlyArray<string>,
+          watch = false,
         ) {
-          const state = yield* supervisor.state
-          if (state.source === null || !sameSource(state.source, source)) {
-            yield* switchTo(source)
-          }
-          return yield* schedule(source, packagePath, script, args)
+          return yield* mutation.withPermits(1)(Effect.uninterruptible(Effect.gen(function* () {
+            const state = yield* supervisor.state
+            const previous = state.source
+            const sourceChanged = previous !== null && !sameSource(previous, source)
+            if (watch || (yield* watchedCommands()).length > 0) {
+              yield* movingSyncInternal(source, packagePath, true)
+            } else if (state.source === null || !sameSource(state.source, source)) {
+              yield* switchToInternal(source)
+            }
+            const record = yield* schedule(source, packagePath, script, args, watch).pipe(Effect.catchAll((error) => {
+              if (!sourceChanged || previous === null) return Effect.fail(error)
+              const rollback = previous.kind === "worktree"
+                ? movingSyncInternal(previous, packagePath, false)
+                : switchToInternal(previous)
+              return rollback.pipe(
+                Effect.catchAll((rollbackError) => new RunboxError({
+                  operation: "rollback failed activation",
+                  message: "command scheduling failed and the previous source could not be restored",
+                  code: "SYNC_ROLLBACK_FAILED",
+                  suggestion: "Inspect 'runbox logs sync --json', repair the source worktree, then retry activation.",
+                  details: JSON.stringify({
+                    activationError: toErrorInfo(error),
+                    rollbackError: toErrorInfo(rollbackError),
+                  }),
+                })),
+                Effect.zipRight(Effect.fail(error)),
+              )
+            }))
+            if (watch) {
+              yield* startWatchGuard()
+            }
+            return record
+          }).pipe(Effect.tapError(() => watch ? cleanupUnownedWatcher() : Effect.void))))
+        })
+
+        const forward = Effect.fn("Workflow.forward")(function* (
+          source: SourceRef,
+          packagePath: string,
+          argv: ReadonlyArray<string>,
+          observer: ForwardObserver,
+        ) {
+          return yield* mutation.withPermits(1)(Effect.gen(function* () {
+            const state = yield* supervisor.state
+            if ((yield* watchedCommands()).length > 0) {
+              yield* movingSyncInternal(source, packagePath, true)
+            } else if (state.source === null || !sameSource(state.source, source)) {
+              yield* switchToInternal(source)
+            } else {
+              yield* prepareCommit(source, packagePath)
+            }
+            return yield* supervisor.forward(packagePath, argv, observer)
+          }))
         })
 
         yield* Effect.addFinalizer(() =>
-          Effect.forEach(
-            [...jobs.values()],
-            (job) => job.fiber === null ? Effect.void : Fiber.interrupt(job.fiber),
-            { concurrency: "unbounded", discard: true },
-          ),
+          Effect.gen(function* () {
+            closing = true
+            watchSyncPending = false
+            if (watchGuard !== null) yield* Fiber.interrupt(watchGuard)
+            if (watchSyncFiber !== null) yield* Fiber.interrupt(watchSyncFiber)
+            yield* Effect.forEach(
+              [...jobs.values()],
+              (job) => job.fiber === null ? Effect.void : Fiber.interrupt(job.fiber),
+              { concurrency: "unbounded", discard: true },
+            )
+          }),
         )
 
-        return Workflow.of({ setup, start, stop, stopAll, switchTo, activate })
+        return Workflow.of({ setup, start, stop, stopAll, switchTo, activate, sync, forward })
       }),
     )
 }

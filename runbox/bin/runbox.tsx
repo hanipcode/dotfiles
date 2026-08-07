@@ -6,7 +6,7 @@ import { Console, Effect, Layer, Option } from "effect"
 import { access, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
 import { basename, dirname, join } from "node:path"
 import { randomUUID } from "node:crypto"
-import { bootstrap, daemonRequest, ensureDaemonConfigured, sourceRef } from "../src/client.ts"
+import { bootstrap, daemonForward, daemonRequest, ensureDaemonConfigured, sourceRef } from "../src/client.ts"
 import { ensureCommitted, type CommitOptions } from "../src/commit.ts"
 import type { ProjectContext, RepoSnapshot } from "../src/domain.ts"
 import { commandId, repositoryRoot, sameSource } from "../src/domain.ts"
@@ -32,6 +32,10 @@ const agentCommitOption = Options.boolean("agent-commit")
 const commitMessageOption = Options.text("commit-message").pipe(Options.optional)
 const linesOption = Options.integer("lines").pipe(Options.withDefault(200))
 const environmentSourceOption = Options.text("environment-source").pipe(Options.optional)
+const watchOption = Options.boolean("watch").pipe(Options.withAlias("w"))
+const executableArg = Args.text({ name: "executable" })
+const commandArgs = Args.text({ name: "args" }).pipe(Args.repeated)
+const FORWARD_CAPTURE_LIMIT = 64 * 1024
 
 const safe = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
@@ -162,12 +166,12 @@ const waitForCommand = Effect.fn("Cli.waitForCommand")(function* (
 const runScript = Effect.fn("Cli.runScript")(function* (
   script: string,
   args: ReadonlyArray<string>,
-  options: CommitOptions & { readonly json: boolean },
+  options: CommitOptions & { readonly json: boolean; readonly watch: boolean },
 ) {
   let project = yield* discover()
   const projects = yield* Project
   yield* projects.requireScript(project, script)
-  if (yield* ensureCommitted(project, { ...options, noTui: options.noTui || options.json })) {
+  if (!options.watch && (yield* ensureCommitted(project, { ...options, noTui: options.noTui || options.json }))) {
     project = yield* projects.discover(process.cwd())
   }
   const { socket } = yield* initializeClient(project)
@@ -177,8 +181,9 @@ const runScript = Effect.fn("Cli.runScript")(function* (
     script,
     args,
     source: sourceRef(project),
+    watch: options.watch,
   } as const
-  if (options.json || options.noTui || !process.stdout.isTTY) {
+  if (options.watch || options.json || options.noTui || !process.stdout.isTTY) {
     yield* daemonRequest(socket, request)
     const snapshot = yield* withPreparationProgress(
       waitForCommand(socket, project.packagePath, commandId(project.packagePath, script)),
@@ -215,10 +220,11 @@ const root = Command.make(
     noTui: noTuiOption,
     agentCommit: agentCommitOption,
     commitMessage: commitMessageOption,
+    watch: watchOption,
   },
-  ({ agentCommit, args, commitMessage, json, noTui, script }) =>
+  ({ agentCommit, args, commitMessage, json, noTui, script, watch }) =>
     safe(Option.isSome(script)
-      ? runScript(script.value, args, { noTui, json, agentCommit, commitMessage })
+      ? runScript(script.value, args, { noTui, json, agentCommit, commitMessage, watch })
       : Effect.gen(function* () {
           if (!json && !noTui && process.stdout.isTTY) return yield* openGlobalDashboard()
           const application = yield* RunboxApplication
@@ -242,10 +248,127 @@ const runCommand = Command.make(
     noTui: noTuiOption,
     agentCommit: agentCommitOption,
     commitMessage: commitMessageOption,
+    watch: watchOption,
   },
-  ({ agentCommit, args, commitMessage, json, noTui, script }) =>
-    safe(runScript(script, args, { noTui, json, agentCommit, commitMessage }), json),
+  ({ agentCommit, args, commitMessage, json, noTui, script, watch }) =>
+    safe(runScript(script, args, { noTui, json, agentCommit, commitMessage, watch }), json),
 ).pipe(Command.withDescription("Run a script whose name collides with a runbox command"))
+
+const syncCommand = Command.make(
+  "sync",
+  { json: jsonOption },
+  ({ json }) => safe(Effect.gen(function* () {
+    const project = yield* discover()
+    const { socket } = yield* initializeClient(project)
+    const response = yield* daemonRequest(socket, {
+      type: "sync",
+      packagePath: project.packagePath,
+      source: sourceRef(project),
+    })
+    if (response.sync === undefined) {
+      return yield* new RunboxError({
+        operation: "synchronize source worktree",
+        message: "daemon returned no sync result",
+        code: "INVALID_RESPONSE",
+        suggestion: "Upgrade runbox and retry.",
+      })
+    }
+    if (json) yield* printJson("sync", response.sync)
+    else yield* Console.log(
+      `Synced ${response.sync.copied} copied, ${response.sync.removed} removed from ${response.sync.sourcePath}`,
+    )
+  }), json),
+).pipe(Command.withDescription("Synchronize uncommitted source changes into the managed runner"))
+
+const appendCapture = (
+  capture: { value: string; truncated: boolean },
+  text: string,
+): void => {
+  const combined = capture.value + text
+  if (combined.length > FORWARD_CAPTURE_LIMIT) {
+    capture.value = combined.slice(-FORWARD_CAPTURE_LIMIT)
+    capture.truncated = true
+  } else {
+    capture.value = combined
+  }
+}
+
+const forwardCommand = Command.make(
+  "forward",
+  {
+    executable: executableArg,
+    args: commandArgs,
+    json: jsonOption,
+    noTui: noTuiOption,
+    agentCommit: agentCommitOption,
+    commitMessage: commitMessageOption,
+  },
+  ({ agentCommit, args, commitMessage, executable, json, noTui }) =>
+    safe(Effect.gen(function* () {
+      let project = yield* discover()
+      const projects = yield* Project
+      if (yield* ensureCommitted(project, {
+        noTui: noTui || json,
+        agentCommit,
+        commitMessage,
+      })) {
+        project = yield* projects.discover(process.cwd())
+      }
+      const { socket } = yield* initializeClient(project)
+      const stdout = { value: "", truncated: false }
+      const stderr = { value: "", truncated: false }
+      const result = yield* daemonForward(socket, {
+        type: "forward",
+        packagePath: project.packagePath,
+        argv: [executable, ...args],
+        source: sourceRef(project),
+      }, {
+        onStart: () => {},
+        onOutput: (stream, text) => {
+          if (json) appendCapture(stream === "stdout" ? stdout : stderr, text)
+          else if (stream === "stdout") process.stdout.write(text)
+          else process.stderr.write(text)
+        },
+      })
+      const data = {
+        ...result,
+        stdout: stdout.value,
+        stderr: stderr.value,
+        stdoutTruncated: stdout.truncated,
+        stderrTruncated: stderr.truncated,
+      }
+      if (json) {
+        if (result.exitCode === 0 && result.signal === null) {
+          yield* printJson("forward", data)
+        } else {
+          yield* Console.log(JSON.stringify({
+            ok: false,
+            command: "forward",
+            data,
+            error: {
+              code: result.signal === null ? "FORWARDED_COMMAND_FAILED" : "FORWARD_INTERRUPTED",
+              message: result.signal === null
+                ? `${JSON.stringify(result.argv)} exited with ${result.exitCode}`
+                : `${JSON.stringify(result.argv)} was terminated by ${result.signal}`,
+              operation: "execute forwarded command",
+              suggestion: "Inspect data.stdout, data.stderr, and 'runbox logs forward --json'. Correct the underlying cause before retrying.",
+              retryable: false,
+              details: null,
+            },
+          }, null, 2))
+        }
+      } else {
+        for (const warning of result.warnings) {
+          yield* Console.error(`runbox: ${warning.code}: ${warning.message}`)
+        }
+      }
+      if (result.exitCode !== 0 || result.signal !== null) {
+        yield* Effect.sync(() => {
+          process.exitCode = result.exitCode > 0 ? result.exitCode : 1
+        })
+      }
+    }), json),
+).pipe(Command.withDescription("Run a synchronous one-off command in the managed runner"))
 
 const stackCommand = Command.make(
   "stack",
@@ -369,6 +492,7 @@ const projectsCommand = Command.make("projects", { json: jsonOption }, ({ json }
           status: record.status,
           pid: record.pid,
           alive,
+          sourceWatch: record.sourceWatch ?? false,
         }
       })
       return {
@@ -428,7 +552,7 @@ const logsCommand = Command.make(
       const logs = yield* LogStore
       const paths = yield* Paths
       const target = yield* resolveRegistryTarget(projectOrCommand, command)
-      const artifact = ["setup", "history", "instructions"].includes(target.command)
+      const artifact = ["setup", "history", "instructions", "forward", "sync"].includes(target.command)
       const record = artifact
         ? null
         : yield* registry.command(target.state, target.command)
@@ -437,7 +561,13 @@ const logsCommand = Command.make(
           ? paths.historyFile(target.state.repoId)
           : target.command === "instructions"
             ? paths.instructionsFile(target.state.repoId)
-            : join(paths.repoState(target.state.repoId), "logs", "setup.log")
+            : join(
+                paths.repoState(target.state.repoId),
+                "logs",
+                target.command === "forward"
+                  ? "forward.log"
+                  : target.command === "sync" ? "sync.log" : "setup.log",
+              )
       )
       const retained = yield* logs.tail(logFile)
       const lineLimit = Math.max(1, lines)
@@ -646,6 +776,36 @@ const doctorCommand = Command.make(
               suggestion: memory.right.exists ? null : "Run setup or start a command to create preparation memory.",
             })
       }
+      const syncJournalPath = join(paths.repoState(state.repoId), "sync.json")
+      const syncJournal = yield* Effect.tryPromise({
+        try: () => readFile(syncJournalPath, "utf8").then(
+          (raw) => {
+            const parsed = JSON.parse(raw) as { version?: unknown }
+            if (parsed.version !== 1) throw new Error("unsupported sync journal version")
+            return { exists: true, valid: true }
+          },
+          (cause: NodeJS.ErrnoException) => cause.code === "ENOENT"
+            ? { exists: false, valid: true }
+            : Promise.reject(cause),
+        ),
+        catch: () => new RunboxError({
+          operation: "validate sync journal",
+          message: `${syncJournalPath} contains invalid synchronization state`,
+        }),
+      }).pipe(Effect.either)
+      checks.push(syncJournal._tag === "Left"
+        ? {
+            name: "source-sync",
+            status: "error",
+            message: syncJournal.left.message,
+            suggestion: "Inspect the sync journal and 'runbox logs sync --json' before removing only the invalid journal.",
+          }
+        : {
+            name: "source-sync",
+            status: syncJournal.right.exists ? "ok" : "warning",
+            message: syncJournal.right.exists ? syncJournalPath : "source synchronization has not run yet",
+            suggestion: syncJournal.right.exists ? null : "Run 'runbox sync --json' when dirty-worktree synchronization is needed.",
+          })
       const socketPath = paths.socket(state.repoId)
       const daemonRunning = yield* Effect.promise(() => access(socketPath).then(() => true, () => false))
       checks.push(daemonRunning
@@ -884,6 +1044,8 @@ const app = root.pipe(
   Command.withSubcommands([
     initCommand,
     runCommand,
+    syncCommand,
+    forwardCommand,
     stackCommand,
     commandsCommand,
     projectsCommand,

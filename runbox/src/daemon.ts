@@ -1,15 +1,38 @@
-import { Effect, Layer, Runtime, Schema } from "effect"
-import { createServer } from "node:net"
+import { Effect, Fiber, Layer, Runtime, Schema } from "effect"
+import { createServer, type Socket } from "node:net"
 import { mkdir, readFile, rm } from "node:fs/promises"
 import { dirname } from "node:path"
 import { spawnSync } from "node:child_process"
-import { DaemonRequestSchema, stateRevision, type DaemonRequest, type DaemonResponse, type ProjectContext, type RepoState } from "./domain.ts"
+import {
+  DaemonRequestSchema,
+  RUNBOX_PROTOCOL_VERSION,
+  stateRevision,
+  type DaemonRequest,
+  type DaemonResponse,
+  type ForwardStart,
+  type ProjectContext,
+  type RepoState,
+} from "./domain.ts"
 import { RunboxError, toErrorInfo } from "./errors.ts"
 import { CoreLayer } from "./layers.ts"
 import { Supervisor } from "./services/Supervisor.ts"
 import { Workflow } from "./services/Workflow.ts"
+import { SourceSync } from "./services/SourceSync.ts"
 
-const handler = (request: DaemonRequest) =>
+interface ForwardObserver {
+  readonly onStart: (start: ForwardStart) => void
+  readonly onOutput: (stream: "stdout" | "stderr", text: string) => void
+}
+
+type SuccessResponse = Extract<DaemonResponse, { readonly ok: true }>
+
+const success = (response: Omit<SuccessResponse, "ok" | "protocolVersion"> = {}): SuccessResponse => ({
+  ok: true,
+  protocolVersion: RUNBOX_PROTOCOL_VERSION,
+  ...response,
+})
+
+const handler = (request: DaemonRequest, forwardObserver?: ForwardObserver) =>
   Effect.gen(function* () {
     const supervisor = yield* Supervisor
     const workflow = yield* Workflow
@@ -28,25 +51,19 @@ const handler = (request: DaemonRequest) =>
     }
     switch (request.type) {
       case "ping":
-        return { ok: true, message: "ready" } satisfies DaemonResponse
+        return success({ message: "ready" })
       case "status":
-        return { ok: true, snapshot: yield* supervisor.snapshot(request.packagePath) } satisfies DaemonResponse
+        return success({ snapshot: yield* supervisor.snapshot(request.packagePath) })
       case "start":
-        yield* workflow.start(request.source, request.packagePath, request.script, request.args)
-        return {
-          ok: true,
-          snapshot: yield* supervisor.snapshot(request.packagePath),
-        } satisfies DaemonResponse
+        yield* workflow.start(request.source, request.packagePath, request.script, request.args, request.watch ?? false)
+        return success({ snapshot: yield* supervisor.snapshot(request.packagePath) })
       case "setup":
         yield* workflow.setup(request.source, request.packagePath)
-        return { ok: true, message: `prepared ${request.source.commit.slice(0, 8)}` } satisfies DaemonResponse
+        return success({ message: `prepared ${request.source.commit.slice(0, 8)}` })
       case "stop":
         if (request.script === "all") yield* workflow.stopAll()
         else yield* workflow.stop(request.packagePath, request.script)
-        return {
-          ok: true,
-          snapshot: yield* supervisor.snapshot(request.packagePath),
-        } satisfies DaemonResponse
+        return success({ snapshot: yield* supervisor.snapshot(request.packagePath) })
       case "restart": {
         const state = yield* supervisor.state
         const id = `${request.packagePath === "" ? "." : request.packagePath}:${request.script}`
@@ -68,28 +85,46 @@ const handler = (request: DaemonRequest) =>
           })
         }
         yield* workflow.stop(record.packagePath, record.script)
-        yield* workflow.start(state.source, record.packagePath, record.script, record.args)
-        return {
-          ok: true,
-          snapshot: yield* supervisor.snapshot(record.packagePath),
-        } satisfies DaemonResponse
+        yield* workflow.start(state.source, record.packagePath, record.script, record.args, record.sourceWatch)
+        return success({ snapshot: yield* supervisor.snapshot(record.packagePath) })
       }
       case "configure": {
         yield* supervisor.setEnvironmentSourceRoot(request.environmentSourceRoot)
-        return { ok: true, message: "configured environment source" } satisfies DaemonResponse
+        return success({ message: "configured environment source" })
       }
       case "switch":
         yield* workflow.switchTo(request.source)
-        return { ok: true, message: `switched to ${request.source.branch ?? request.source.commit}` } satisfies DaemonResponse
+        return success({ message: `switched to ${request.source.branch ?? request.source.commit}` })
       case "activate":
-        yield* workflow.activate(request.source, request.packagePath, request.script, request.args)
-        return {
-          ok: true,
-          snapshot: yield* supervisor.snapshot(request.packagePath),
-        } satisfies DaemonResponse
+        yield* workflow.activate(
+          request.source,
+          request.packagePath,
+          request.script,
+          request.args,
+          request.watch ?? false,
+        )
+        return success({ snapshot: yield* supervisor.snapshot(request.packagePath) })
+      case "forward":
+        if (forwardObserver === undefined) {
+          return yield* new RunboxError({
+            operation: "forward command",
+            message: "forward output observer is unavailable",
+            code: "INTERNAL_ERROR",
+          })
+        }
+        return success({
+          forward: yield* workflow.forward(
+            request.source,
+            request.packagePath,
+            request.argv,
+            forwardObserver,
+          ),
+        })
+      case "sync":
+        return success({ sync: yield* workflow.sync(request.source, request.packagePath) })
       case "shutdown":
         yield* workflow.stopAll()
-        return { ok: true, message: "stopped" } satisfies DaemonResponse
+        return success({ message: "stopped" })
     }
   })
 
@@ -97,8 +132,9 @@ export const runDaemon = (
   project: ProjectContext,
   state: RepoState,
   socketPath: string,
-): Effect.Effect<never, RunboxError> => {
-  const SupervisorLayer = Supervisor.layer(project, state).pipe(Layer.provideMerge(CoreLayer))
+): Effect.Effect<void, RunboxError> => {
+  const SourceSyncLayer = SourceSync.layer(project, state.runnerPath).pipe(Layer.provideMerge(CoreLayer))
+  const SupervisorLayer = Supervisor.layer(project, state).pipe(Layer.provideMerge(SourceSyncLayer))
   const AppLayer = Workflow.layer(project).pipe(Layer.provideMerge(SupervisorLayer))
 
   const lockPath = `${socketPath}.lock`
@@ -132,14 +168,19 @@ export const runDaemon = (
     })
     const runtime = yield* Effect.runtime<Supervisor | Workflow>()
     const runPromiseExit = Runtime.runPromiseExit(runtime)
-      const mutex = yield* Effect.makeSemaphore(1)
-      return yield* Effect.async<never, RunboxError>((resume) => {
-        let shuttingDown = false
-        let cleanupStarted = false
-        const server = createServer((socket) => {
-          let input = ""
-          socket.setEncoding("utf8")
-          socket.on("error", () => socket.destroy())
+    const runFork = Runtime.runFork(runtime)
+    const mutex = yield* Effect.makeSemaphore(1)
+    return yield* Effect.async<void, RunboxError>((resume) => {
+      let shuttingDown = false
+      let cleanupStarted = false
+      const sockets = new Set<Socket>()
+      const requestFibers = new Set<Fiber.RuntimeFiber<DaemonResponse, RunboxError>>()
+      const server = createServer((socket) => {
+        sockets.add(socket)
+        socket.once("close", () => sockets.delete(socket))
+        let input = ""
+        socket.setEncoding("utf8")
+        socket.on("error", () => socket.destroy())
         socket.on("data", (chunk: string) => {
           input += chunk
           const newline = input.indexOf("\n")
@@ -176,10 +217,28 @@ export const runDaemon = (
           }
           const terminal = (parsed.type === "stop" && parsed.script === "all") || parsed.type === "shutdown"
           if (terminal) shuttingDown = true
+          const observer = parsed.type === "forward"
+            ? {
+                onStart: (data: ForwardStart) => {
+                  socket.write(`${JSON.stringify({ type: "start", data })}\n`)
+                },
+                onOutput: (stream: "stdout" | "stderr", text: string) => {
+                  socket.write(`${JSON.stringify({ type: "output", stream, text })}\n`)
+                },
+              }
+            : undefined
           const requestEffect = parsed.type === "status" || parsed.type === "ping"
-            ? handler(parsed)
-            : mutex.withPermits(1)(handler(parsed))
-          void runPromiseExit(requestEffect).then((exit) => {
+            ? handler(parsed, observer)
+            : mutex.withPermits(1)(handler(parsed, observer))
+          const fiber = runFork(requestEffect)
+          requestFibers.add(fiber)
+          let completed = false
+          socket.once("close", () => {
+            if (!completed) runFork(Fiber.interrupt(fiber))
+          })
+          void runPromiseExit(Fiber.join(fiber)).then((exit) => {
+            completed = true
+            requestFibers.delete(fiber)
             if (exit._tag === "Success") socket.end(`${JSON.stringify(exit.value)}\n`)
             else {
               const failure = exit.cause._tag === "Fail" ? exit.cause.error : exit.cause
@@ -187,11 +246,23 @@ export const runDaemon = (
             }
             if (terminal && !cleanupStarted) {
               cleanupStarted = true
-              void rm(socketPath, { force: true }).finally(() => {
-                server.close(() => {
-                  void releaseLock().finally(() => process.exit(0))
-                })
-              })
+              const close = async () => {
+                try {
+                  await runPromiseExit(Effect.forEach(
+                    [...requestFibers],
+                    (active) => Fiber.interrupt(active),
+                    { concurrency: "unbounded", discard: true },
+                  ))
+                  for (const connection of sockets) {
+                    if (connection !== socket) connection.destroy()
+                  }
+                  await new Promise<void>((resolve) => server.close(() => resolve()))
+                  await rm(socketPath, { force: true })
+                } finally {
+                  resume(Effect.void)
+                }
+              }
+              void close()
             }
           })
         })
@@ -201,16 +272,16 @@ export const runDaemon = (
       })
       server.listen(socketPath)
       return Effect.promise(async () => {
-        await new Promise<void>((resolve) => server.close(() => resolve()))
+        for (const socket of sockets) socket.destroy()
+        if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()))
         await rm(socketPath, { force: true })
-        await releaseLock()
       })
     })
   }).pipe(Effect.provide(AppLayer))
 
-  return acquireLock.pipe(
-    Effect.zipRight(
-      serve.pipe(Effect.ensuring(Effect.promise(releaseLock))),
-    ),
+  return Effect.acquireUseRelease(
+    acquireLock,
+    () => serve,
+    () => Effect.promise(releaseLock),
   )
 }

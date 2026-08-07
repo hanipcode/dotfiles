@@ -9,7 +9,7 @@ git clone <this> ~/.dotfiles && cd ~/.dotfiles
 ./dot brew          # install packages
 ./dot stow          # symlink home/ into $HOME
 ./dot plugins       # link herdr plugins
-./dot tools         # install and link personal CLIs (runbox)
+./dot tools         # install and link personal CLIs (runbox, hanif-agent)
 ./dot doctor        # verify
 ```
 
@@ -54,7 +54,24 @@ home/                        stowed to $HOME
   .tmux.conf .zshrc .zshenv
 heherdr/                     herdr plugin source — NOT stowed, see below
 runbox/                      Git-aware managed runner for agent worktrees
+hanif-agent/                 reusable agent workflow CLI (adversarial review first)
 ```
+
+## Agent workflows
+
+`hanif-agent` is the standalone home for reusable agent workflows. Its first
+command reviews the current branch plus staged, unstaged, and untracked changes
+through independent Luna reviewers and two Sol adjudication passes:
+
+```sh
+hanif-agent review
+hanif-agent review --base main
+```
+
+Review history is an expendable, repository- and branch-scoped cache under
+`/tmp/agentic-review`. Successful reviews also place a paste-ready Markdown report
+on the macOS clipboard. Run `./dot tools` after cloning to install dependencies and
+expose the CLI through Bun's global link.
 
 ## Agent skills
 
