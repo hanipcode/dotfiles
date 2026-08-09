@@ -16,12 +16,12 @@ import { BunContext, BunRuntime } from "@effect/platform-bun"
 import { Effect, Layer } from "effect"
 import { GhStackClient, GitClient, HerdrClient, PluginContext } from "@heherdr/framework"
 import { openCommand } from "../src/framework/herdr/openPane.ts"
-import { worktreeCommand } from "../src/plugins/worktree/command.tsx"
+import { worktreeCommand, worktreeFromCommand } from "../src/plugins/worktree/command.tsx"
 import { stackCommand } from "../src/plugins/stack/command.tsx"
 
 const heherdr = Command.make("heherdr").pipe(
   Command.withDescription("Modal herdr plugins — vim-style overlays for herdr"),
-  Command.withSubcommands([worktreeCommand, stackCommand, openCommand]),
+  Command.withSubcommands([worktreeCommand, worktreeFromCommand, stackCommand, openCommand]),
 )
 
 const cli = Command.run(heherdr, {

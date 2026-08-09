@@ -110,10 +110,10 @@ Guidance:
 
 ## Errors
 
-Apply [`errors.md`](errors.md) to the error's meaning, granularity, context, message, and recovery guidance. `Schema.TaggedErrorClass` is the explicit class exception for typed Effect errors.
+Apply [`errors.md`](errors.md) to the error's meaning, granularity, context, message, and recovery guidance. `Schema.TaggedError` is the schema-backed class form for typed Effect errors.
 
 ```ts
-export class PersistenceError extends Schema.TaggedErrorClass<PersistenceError>()(
+export class PersistenceError extends Schema.TaggedError<PersistenceError>()(
   "UserRepo.PersistenceError",
   {
     operation: Schema.String,

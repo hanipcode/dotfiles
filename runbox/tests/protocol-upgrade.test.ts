@@ -105,6 +105,7 @@ describe("daemon protocol upgrades", () => {
     expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0)
     expect(result.stdout).toContain(".:quick")
     run(root, env, "stop", "all", "--json")
+    run(root, env, "shutdown", "--json")
     for (const connection of connections) connection.destroy()
     server.close()
   }, 30_000)

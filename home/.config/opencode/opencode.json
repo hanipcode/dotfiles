@@ -8,6 +8,13 @@
     "opencode-anthropic-auth",
     "@byfungsi/opencode-sumopod-plugin"
   ],
+  "references": {
+    "effect": {
+      "repository": "Effect-TS/effect",
+      "branch": "main",
+      "description": "Use for Effect V4 API signatures, source, tests, and current examples whenever Effect code changes."
+    }
+  },
   "provider": {
     "openai": {
       "options": {

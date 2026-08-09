@@ -48,5 +48,6 @@ describe("preparation progress", () => {
     expect(result.stdout).toContain(".:quick running")
 
     spawnSync("bun", [cli, "stop", "all", "--json"], { cwd: root, env, encoding: "utf8" })
+    spawnSync("bun", [cli, "shutdown", "--json"], { cwd: root, env, encoding: "utf8" })
   }, 30_000)
 })

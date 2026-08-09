@@ -149,6 +149,12 @@ command = "heherdr.worktree"
 description = "project worktrees (modal)"
 
 [[keys.command]]
+key = "prefix+shift+b"
+type = "plugin_action"
+command = "heherdr.worktree-from"
+description = "new worktree from base branch"
+
+[[keys.command]]
 key = "prefix+t"
 type = "plugin_action"
 command = "heherdr.stack"

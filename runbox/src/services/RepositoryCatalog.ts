@@ -265,7 +265,7 @@ export class RepositoryCatalog extends Context.Tag("@runbox/RepositoryCatalog")<
             stateRevision: stateRevision(entry.state),
             problem: null,
           }
-        }), { concurrency: "unbounded" }).pipe(Effect.map((values) => values.sort((left, right) =>
+        }), { concurrency: 8 }).pipe(Effect.map((values) => values.sort((left, right) =>
           right.activeCommandCount - left.activeCommandCount || left.name.localeCompare(right.name)
         )))
         const selectedSummary = query.repositoryId === undefined

@@ -88,6 +88,7 @@ export type OperatorIntent =
       readonly packagePath: string
       readonly script: string
       readonly args: ReadonlyArray<string>
+      readonly watch?: boolean
     }
   | {
       readonly type: "switch"

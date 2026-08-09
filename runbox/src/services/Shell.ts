@@ -8,6 +8,7 @@ export interface RunOptions {
   readonly env?: Readonly<Record<string, string | undefined>>
   readonly allowFailure?: boolean
   readonly timeoutMs?: number
+  readonly captureBytes?: number
   readonly onStart?: () => void
   readonly onStdout?: (chunk: string) => void
   readonly onStderr?: (chunk: string) => void
@@ -22,6 +23,25 @@ export interface CommandOutput {
 
 const signalExitCode = (signal: NodeJS.Signals): number =>
   128 + (constants.signals[signal] ?? 0)
+
+const DEFAULT_CAPTURE_BYTES = 1024 * 1024
+
+const captureLimit = (value: number | undefined): number => {
+  if (value === undefined || !Number.isFinite(value)) return DEFAULT_CAPTURE_BYTES
+  return Math.max(0, Math.floor(value))
+}
+
+const retainSuffix = (current: Buffer, chunk: string, limit: number): Buffer => {
+  const incoming = Buffer.from(chunk)
+  if (limit === 0) return Buffer.alloc(0)
+  if (incoming.length >= limit) return incoming.subarray(incoming.length - limit)
+
+  const start = Math.max(0, current.length + incoming.length - limit)
+  const result = Buffer.allocUnsafe(current.length - start + incoming.length)
+  current.copy(result, 0, start)
+  incoming.copy(result, current.length - start)
+  return result
+}
 
 export class Shell extends Context.Tag("@runbox/Shell")<
   Shell,
@@ -60,8 +80,9 @@ export class Shell extends Context.Tag("@runbox/Shell")<
             stdio: ["ignore", "pipe", "pipe"],
             detached,
           })
-          let stdout = ""
-          let stderr = ""
+          const limit = captureLimit(options.captureBytes)
+          let stdout: Buffer<ArrayBufferLike> = Buffer.alloc(0)
+          let stderr: Buffer<ArrayBufferLike> = Buffer.alloc(0)
           let settled = false
           let killTimer: ReturnType<typeof setTimeout> | undefined
           const terminate = () => {
@@ -90,11 +111,11 @@ export class Shell extends Context.Tag("@runbox/Shell")<
             resume(effect)
           }
           child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
-            stdout += chunk
+            stdout = retainSuffix(stdout, chunk, limit)
             options.onStdout?.(chunk)
           })
           child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
-            stderr += chunk
+            stderr = retainSuffix(stderr, chunk, limit)
             options.onStderr?.(chunk)
           })
           child.once("spawn", () => options.onStart?.())
@@ -107,8 +128,8 @@ export class Shell extends Context.Tag("@runbox/Shell")<
           child.once("close", (code, signal) => {
             if (killTimer !== undefined) clearTimeout(killTimer)
             finish(Effect.succeed([
-              stdout,
-              stderr,
+              stdout.toString("utf8"),
+              stderr.toString("utf8"),
               code ?? (signal === null ? -1 : signalExitCode(signal)),
               signal,
             ]))

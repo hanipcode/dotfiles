@@ -61,6 +61,8 @@ describe("launch lifecycle", () => {
 
       const stopped = run(root, env, "stop", "all", "--json")
       expect(stopped.status, `${stopped.stdout}\n${stopped.stderr}`).toBe(0)
+      const shutdown = run(root, env, "shutdown", "--json")
+      expect(shutdown.status, `${shutdown.stdout}\n${shutdown.stderr}`).toBe(0)
     }),
     30_000,
   )

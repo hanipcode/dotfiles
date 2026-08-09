@@ -49,6 +49,7 @@ export interface WorktreeSafety {
 }
 
 export interface GitClient {
+  readonly branches: (repoRoot: string) => Effect.Effect<ReadonlyArray<string>, GitError>
   readonly worktrees: (repoRoot: string) => Effect.Effect<ReadonlyArray<GitWorktree>, GitError>
   readonly safety: (
     repoRoot: string,
@@ -158,6 +159,24 @@ const parsePorcelain = (stdout: string): ReadonlyArray<GitWorktree> => {
 }
 
 const make = (): GitClient => ({
+  branches: (repoRoot) =>
+    Effect.map(
+      check(repoRoot, [
+        "for-each-ref",
+        "--format=%(refname:short)",
+        "refs/heads",
+        "refs/remotes",
+      ]),
+      (stdout) => [
+        ...new Set(
+          stdout
+            .split("\n")
+            .map((branch) => branch.trim())
+            .filter((branch) => branch !== "" && !branch.endsWith("/HEAD")),
+        ),
+      ],
+    ),
+
   worktrees: (repoRoot) =>
     Effect.map(check(repoRoot, ["worktree", "list", "--porcelain"]), parsePorcelain),
 

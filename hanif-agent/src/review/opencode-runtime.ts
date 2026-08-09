@@ -1,16 +1,26 @@
-import { createOpencode, type OpencodeClient } from "@opencode-ai/sdk"
-import { Context, Effect, Layer, Schedule, Scope } from "effect"
+import { createOpencode, type Event, type OpencodeClient, type Part, type ToolPart } from "@opencode-ai/sdk"
+import { Context, Effect, Either, Layer, Ref, Schedule, Scope, Stream } from "effect"
 import { ReviewerExecutionError } from "../errors.ts"
-import type { GoalReference, ReviewerResponse, ReviewerTask } from "./domain.ts"
+import type { GoalReference, ReviewerResponse, ReviewerTask, ReviewProgressReporter } from "./domain.ts"
+import { reviewerToolActivity } from "./progress.ts"
 
 interface RuntimeOptions {
   readonly directory: string
   readonly goal: GoalReference | null
+  readonly onProgress: ReviewProgressReporter
 }
 
 /** A running OpenCode server shared by all isolated sessions in one review. */
 export interface RunningOpenCode {
   readonly run: (task: ReviewerTask) => Effect.Effect<ReviewerResponse, ReviewerExecutionError>
+  readonly usage: Effect.Effect<RuntimeUsage>
+}
+
+export interface RuntimeUsage {
+  readonly costUsd: number
+  readonly inputTokens: number
+  readonly cacheReadTokens: number
+  readonly cacheWriteTokens: number
 }
 
 /** Owns acquisition and release of the OpenCode server used by a review. */
@@ -25,13 +35,21 @@ export class OpenCodeRuntime extends Context.Tag("@hanif-agent/OpenCodeRuntime")
     OpenCodeRuntime.of({
       start: Effect.fn("OpenCodeRuntime.start")(function* (options: RuntimeOptions) {
         const controller = new AbortController()
+        const usage = yield* Ref.make<RuntimeUsage>({
+          costUsd: 0,
+          inputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+        })
         const instance = yield* Effect.acquireRelease(
           Effect.tryPromise({
             try: async () => {
               const previousProjectConfig = process.env.OPENCODE_DISABLE_PROJECT_CONFIG
               const previousClaudePrompt = process.env.OPENCODE_DISABLE_CLAUDE_CODE_PROMPT
+              const previousEnableExa = process.env.OPENCODE_ENABLE_EXA
               process.env.OPENCODE_DISABLE_PROJECT_CONFIG = "1"
               process.env.OPENCODE_DISABLE_CLAUDE_CODE_PROMPT = "1"
+              process.env.OPENCODE_ENABLE_EXA = "1"
               try {
                 return await createOpencode({
                   signal: controller.signal,
@@ -44,6 +62,13 @@ export class OpenCodeRuntime extends Context.Tag("@hanif-agent/OpenCodeRuntime")
                         description: "Read-only application-level reviewer session",
                         mode: "primary",
                         tools: {
+                          "*": false,
+                          read: true,
+                          glob: true,
+                          grep: true,
+                          list: true,
+                          webfetch: true,
+                          websearch: true,
                           edit: false,
                           write: false,
                           patch: false,
@@ -52,13 +77,11 @@ export class OpenCodeRuntime extends Context.Tag("@hanif-agent/OpenCodeRuntime")
                           question: false,
                           todowrite: false,
                           bash: false,
-                          webfetch: false,
-                          websearch: false,
                         },
                         permission: {
                           edit: "deny",
                           bash: "deny",
-                          webfetch: "deny",
+                          webfetch: "allow",
                           external_directory: "deny",
                         },
                       },
@@ -80,6 +103,7 @@ export class OpenCodeRuntime extends Context.Tag("@hanif-agent/OpenCodeRuntime")
               } finally {
                 restoreEnvironment("OPENCODE_DISABLE_PROJECT_CONFIG", previousProjectConfig)
                 restoreEnvironment("OPENCODE_DISABLE_CLAUDE_CODE_PROMPT", previousClaudePrompt)
+                restoreEnvironment("OPENCODE_ENABLE_EXA", previousEnableExa)
               }
             },
             catch: (cause) => new ReviewerExecutionError({
@@ -97,6 +121,29 @@ export class OpenCodeRuntime extends Context.Tag("@hanif-agent/OpenCodeRuntime")
         )
 
         yield* ensureTracker(instance.client, options)
+        const sessionRoles = yield* Ref.make<ReadonlyMap<string, string>>(new Map())
+        const seenToolCalls = yield* Ref.make<ReadonlySet<string>>(new Set())
+        const subscription = yield* sdkCall("runtime", "subscribe to OpenCode events", () =>
+          instance.client.event.subscribe({
+            query: { directory: options.directory },
+            signal: controller.signal,
+          })).pipe(Effect.either)
+        if (Either.isRight(subscription)) {
+          yield* Stream.fromAsyncIterable(
+            subscription.right.stream,
+            (cause) => new ReviewerExecutionError({
+              role: "runtime",
+              operation: "consume OpenCode events",
+              message: String(cause),
+              retryable: true,
+              sessionId: null,
+            }),
+          ).pipe(
+            Stream.runForEach((event) => reportToolActivity(event, options, sessionRoles, seenToolCalls)),
+            Effect.catchAll(() => Effect.void),
+            Effect.forkScoped,
+          )
+        }
         const toolIds = yield* sdkCall("runtime", "list OpenCode tools", () => instance.client.tool.ids({
           query: { directory: options.directory },
           throwOnError: true,
@@ -119,6 +166,7 @@ export class OpenCodeRuntime extends Context.Tag("@hanif-agent/OpenCodeRuntime")
                 sessionId: null,
               })
             }
+            yield* Ref.update(sessionRoles, (roles) => new Map(roles).set(session.id, task.role))
             const model = yield* parseModel(task.role, task.model)
             const response = yield* sdkCall(task.role, "run reviewer session", () => instance.client.session.prompt({
               path: { id: session.id },
@@ -133,10 +181,12 @@ export class OpenCodeRuntime extends Context.Tag("@hanif-agent/OpenCodeRuntime")
               signal: AbortSignal.timeout(10 * 60_000),
               throwOnError: true,
             })).pipe(
-              Effect.mapError((error) => new ReviewerExecutionError({
-                ...error,
-                sessionId: session.id,
-              })),
+              Effect.mapError((error) => normalizeReviewerExecutionError(
+                task.role,
+                "run reviewer session",
+                session.id,
+                error,
+              )),
               Effect.onInterrupt(() => Effect.promise(() => instance.client.session.abort({
                 path: { id: session.id },
                 query: { directory: options.directory },
@@ -152,6 +202,25 @@ export class OpenCodeRuntime extends Context.Tag("@hanif-agent/OpenCodeRuntime")
                 sessionId: session.id,
               })
             }
+            const stepUsage = message.parts.reduce<RuntimeUsage>((total, part) => part.type === "step-finish"
+              ? {
+                  costUsd: total.costUsd,
+                  inputTokens: total.inputTokens + part.tokens.input,
+                  cacheReadTokens: total.cacheReadTokens + part.tokens.cache.read,
+                  cacheWriteTokens: total.cacheWriteTokens + part.tokens.cache.write,
+                }
+              : total, {
+                costUsd: message.info.cost,
+                inputTokens: 0,
+                cacheReadTokens: 0,
+                cacheWriteTokens: 0,
+              })
+            yield* Ref.update(usage, (total) => ({
+              costUsd: total.costUsd + stepUsage.costUsd,
+              inputTokens: total.inputTokens + stepUsage.inputTokens,
+              cacheReadTokens: total.cacheReadTokens + stepUsage.cacheReadTokens,
+              cacheWriteTokens: total.cacheWriteTokens + stepUsage.cacheWriteTokens,
+            }))
             if (message.info.error !== undefined) {
               const error = message.info.error
               return yield* new ReviewerExecutionError({
@@ -183,11 +252,35 @@ export class OpenCodeRuntime extends Context.Tag("@hanif-agent/OpenCodeRuntime")
           )
         })
 
-        return { run: runTask }
+        return { run: runTask, usage: Ref.get(usage) }
       }),
     }),
   )
 }
+
+const reportToolActivity = (
+  event: Event,
+  options: RuntimeOptions,
+  sessionRoles: Ref.Ref<ReadonlyMap<string, string>>,
+  seenToolCalls: Ref.Ref<ReadonlySet<string>>,
+): Effect.Effect<void> => Effect.gen(function* () {
+  if (event.type !== "message.part.updated") return
+  const part = event.properties.part
+  if (!isRunningTool(part)) return
+  const role = (yield* Ref.get(sessionRoles)).get(part.sessionID)
+  if (role === undefined) return
+  const detail = reviewerToolActivity(part.tool, part.state.input, options.directory)
+  if (detail === null) return
+  const key = `${part.sessionID}\0${part.callID}`
+  const first = yield* Ref.modify(seenToolCalls, (seen) => {
+    if (seen.has(key)) return [false, seen] as const
+    return [true, new Set(seen).add(key)] as const
+  })
+  if (first) yield* options.onProgress({ type: "stage_activity", role, detail })
+})
+
+const isRunningTool = (part: Part): part is ToolPart & { readonly state: { readonly status: "running"; readonly input: Record<string, unknown> } } =>
+  part.type === "tool" && part.state.status === "running"
 
 const parseModel = (
   role: string,
@@ -209,6 +302,23 @@ const parseModel = (
 const restoreEnvironment = (key: string, value: string | undefined): void => {
   if (value === undefined) delete process.env[key]
   else process.env[key] = value
+}
+
+/** Rebuild provider failures with every field required by the application error schema. */
+export const normalizeReviewerExecutionError = (
+  role: string,
+  operation: string,
+  sessionId: string | null,
+  cause: unknown,
+): ReviewerExecutionError => {
+  const existing = cause instanceof ReviewerExecutionError ? cause : null
+  return new ReviewerExecutionError({
+    role,
+    operation: existing?.operation ?? operation,
+    message: existing?.message ?? String(cause),
+    retryable: existing?.retryable ?? true,
+    sessionId,
+  })
 }
 
 const sdkCall = <A>(
@@ -265,13 +375,15 @@ const ensureTracker = (
   }
 })
 
-const toolAccess = (
+/** Restrict each reviewer session to safe source, web, and goal-tracker tools. */
+export const toolAccess = (
   toolIds: ReadonlyArray<string>,
   goal: GoalReference | null,
   allowTracker: boolean,
 ): Readonly<Record<string, boolean>> => Object.fromEntries(toolIds.flatMap((id) => {
   const lower = id.toLowerCase()
-  if (lower === "read" || lower === "glob" || lower === "grep" || lower === "list") {
+  if (lower === "read" || lower === "glob" || lower === "grep" || lower === "list" ||
+    lower === "webfetch" || lower === "websearch") {
     return [[id, true]]
   }
   const trackerTool = lower.includes("linear") || lower.includes("atlassian") || lower.includes("jira")

@@ -18,6 +18,13 @@ import { CoreLayer } from "./layers.ts"
 import { Supervisor } from "./services/Supervisor.ts"
 import { Workflow } from "./services/Workflow.ts"
 import { SourceSync } from "./services/SourceSync.ts"
+import {
+  encodeFrame,
+  MAX_FORWARD_FRAME_BYTES,
+  MAX_REQUEST_FRAME_BYTES,
+  MAX_RESPONSE_FRAME_BYTES,
+  splitUtf8,
+} from "./ipcProtocol.ts"
 
 interface ForwardObserver {
   readonly onStart: (start: ForwardStart) => void
@@ -183,6 +190,10 @@ export const runDaemon = (
         socket.on("error", () => socket.destroy())
         socket.on("data", (chunk: string) => {
           input += chunk
+          if (Buffer.byteLength(input) > MAX_REQUEST_FRAME_BYTES) {
+            socket.destroy()
+            return
+          }
           const newline = input.indexOf("\n")
           if (newline === -1) return
           const line = input.slice(0, newline)
@@ -191,7 +202,7 @@ export const runDaemon = (
           try {
             parsed = Schema.decodeUnknownSync(DaemonRequestSchema)(JSON.parse(line))
           } catch (cause) {
-            socket.end(`${JSON.stringify({
+            socket.end(encodeFrame({
               ok: false,
               error: toErrorInfo(new RunboxError({
                 operation: "decode daemon request",
@@ -199,11 +210,11 @@ export const runDaemon = (
                 code: "INVALID_REQUEST",
                 suggestion: "Upgrade the runbox client and retry the command.",
               })),
-            })}\n`)
+            }, MAX_RESPONSE_FRAME_BYTES))
             return
           }
           if (shuttingDown) {
-            socket.end(`${JSON.stringify({
+            socket.end(encodeFrame({
               ok: false,
               error: toErrorInfo(new RunboxError({
                 operation: "daemon request",
@@ -212,7 +223,7 @@ export const runDaemon = (
                 suggestion: "Retry once the current stop operation completes.",
                 retryable: true,
               })),
-            })}\n`)
+            }, MAX_RESPONSE_FRAME_BYTES))
             return
           }
           const terminal = (parsed.type === "stop" && parsed.script === "all") || parsed.type === "shutdown"
@@ -220,10 +231,23 @@ export const runDaemon = (
           const observer = parsed.type === "forward"
             ? {
                 onStart: (data: ForwardStart) => {
-                  socket.write(`${JSON.stringify({ type: "start", data })}\n`)
+                  try {
+                    if (!socket.write(encodeFrame({ type: "start", data }, MAX_RESPONSE_FRAME_BYTES))) socket.destroy()
+                  } catch {
+                    socket.destroy()
+                  }
                 },
                 onOutput: (stream: "stdout" | "stderr", text: string) => {
-                  socket.write(`${JSON.stringify({ type: "output", stream, text })}\n`)
+                  try {
+                    for (const part of splitUtf8(text, MAX_FORWARD_FRAME_BYTES - 256)) {
+                      if (!socket.write(encodeFrame({ type: "output", stream, text: part }, MAX_FORWARD_FRAME_BYTES))) {
+                        socket.destroy()
+                        return
+                      }
+                    }
+                  } catch {
+                    socket.destroy()
+                  }
                 },
               }
             : undefined
@@ -239,10 +263,24 @@ export const runDaemon = (
           void runPromiseExit(Fiber.join(fiber)).then((exit) => {
             completed = true
             requestFibers.delete(fiber)
-            if (exit._tag === "Success") socket.end(`${JSON.stringify(exit.value)}\n`)
+            if (exit._tag === "Success") {
+              try {
+                socket.end(encodeFrame(exit.value, MAX_RESPONSE_FRAME_BYTES))
+              } catch (cause) {
+                socket.end(encodeFrame({
+                  ok: false,
+                  error: toErrorInfo(new RunboxError({
+                    operation: "encode daemon response",
+                    message: String(cause),
+                    code: "RESPONSE_TOO_LARGE",
+                    suggestion: "Inspect the daemon state and retry with a narrower request.",
+                  })),
+                }, MAX_RESPONSE_FRAME_BYTES))
+              }
+            }
             else {
               const failure = exit.cause._tag === "Fail" ? exit.cause.error : exit.cause
-              socket.end(`${JSON.stringify({ ok: false, error: toErrorInfo(failure) })}\n`)
+              socket.end(encodeFrame({ ok: false, error: toErrorInfo(failure) }, MAX_RESPONSE_FRAME_BYTES))
             }
             if (terminal && !cleanupStarted) {
               cleanupStarted = true

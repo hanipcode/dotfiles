@@ -38,6 +38,17 @@ title = "Worktrees"
 placement = "overlay"
 command = ["bun", "run", "bin/heherdr.ts", "worktree"]
 
+[[actions]]
+id = "worktree-from"
+title = "New worktree from"
+command = ["bun", "run", "bin/heherdr.ts", "open", "worktree-from"]
+
+[[panes]]
+id = "worktree-from"
+title = "New worktree from"
+placement = "overlay"
+command = ["bun", "run", "bin/heherdr.ts", "worktree-from"]
+
 # --- stack --------------------------------------------------------------------
 
 [[actions]]

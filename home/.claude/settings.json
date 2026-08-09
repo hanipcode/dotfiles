@@ -90,11 +90,12 @@
   "enabledPlugins": {
     "figma@claude-plugins-official": true,
     "slack@claude-plugins-official": true,
-    "atlassian@claude-plugins-official": true
+    "atlassian@claude-plugins-official": true,
+    "vercel@claude-plugins-official": true
   },
   "tui": "default",
+  "skipDangerousModePermissionPrompt": true,
   "feedbackSurveyState": {
     "lastShownTime": 1754036707243
-  },
-  "skipDangerousModePermissionPrompt": true
+  }
 }

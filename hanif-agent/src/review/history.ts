@@ -31,13 +31,15 @@ const readRecords = async (path: string): Promise<ReadonlyArray<unknown>> => {
   })
   const lines = raw.split("\n")
   if (!raw.endsWith("\n")) lines.pop()
-  return lines.filter((line) => line.trim().length > 0).map((line, index) => {
-    try {
-      return JSON.parse(line) as unknown
-    } catch (cause) {
-      throw new Error(`invalid JSONL record ${index + 1}: ${String(cause)}`)
-    }
-  })
+  return lines
+    .filter((line) => line.trim().length > 0)
+    .map((line, index) => {
+      try {
+        return JSON.parse(line) as unknown
+      } catch (cause) {
+        throw new Error(`invalid JSONL record ${index + 1}: ${String(cause)}`)
+      }
+    })
 }
 
 /** Append one crash-tolerant record to a branch review stream. */
@@ -48,7 +50,9 @@ export function appendReviewRecord(
   return Effect.tryPromise({
     try: async () => {
       await mkdir(dirname(path), { recursive: true, mode: 0o700 })
-      const state = await lstat(path).catch((cause: NodeJS.ErrnoException) => cause.code === "ENOENT" ? null : Promise.reject(cause))
+      const state = await lstat(path).catch((cause: NodeJS.ErrnoException) =>
+        cause.code === "ENOENT" ? null : Promise.reject(cause),
+      )
       if (state?.isSymbolicLink()) throw new Error("history path is a symbolic link")
       if (state?.isFile()) {
         const current = await readFile(path)
@@ -57,18 +61,23 @@ export function appendReviewRecord(
           await truncate(path, lastNewline + 1)
         }
       }
-      const file = await open(path, constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600)
+      const file = await open(
+        path,
+        constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY | constants.O_NOFOLLOW,
+        0o600,
+      )
       try {
         await file.write(`${JSON.stringify(sanitize({ schemaVersion: 1, ...record }))}\n`)
       } finally {
         await file.close()
       }
     },
-    catch: (cause) => new ReviewHistoryError({
-      operation: "append review history",
-      path,
-      message: String(cause),
-    }),
+    catch: (cause) =>
+      new ReviewHistoryError({
+        operation: "append review history",
+        path,
+        message: String(cause),
+      }),
   })
 }
 
@@ -89,7 +98,6 @@ export function loadPriorReview(path: string): Effect.Effect<PriorReview | null,
           mergeBase: result.mergeBase,
           head: result.head,
           effectiveTreeId: result.effectiveTreeId,
-          snapshotDirectory: result.snapshotDirectory,
           promptVersion: result.promptVersion,
           standardsDigest: result.standardsDigest,
           models: result.models,
@@ -99,10 +107,11 @@ export function loadPriorReview(path: string): Effect.Effect<PriorReview | null,
       }
       return null
     },
-    catch: (cause) => new ReviewHistoryError({
-      operation: "read review history",
-      path,
-      message: String(cause),
-    }),
+    catch: (cause) =>
+      new ReviewHistoryError({
+        operation: "read review history",
+        path,
+        message: String(cause),
+      }),
   })
 }

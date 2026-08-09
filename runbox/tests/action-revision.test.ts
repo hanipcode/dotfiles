@@ -59,5 +59,6 @@ describe("global action revisions", () => {
     })
 
     spawnSync("bun", [cli, "stop", "all", "--json"], { cwd: root, env, encoding: "utf8", timeout: 20_000 })
+    spawnSync("bun", [cli, "shutdown", "--json"], { cwd: root, env, encoding: "utf8", timeout: 20_000 })
   }, 30_000)
 })

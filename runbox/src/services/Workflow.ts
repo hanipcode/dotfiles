@@ -443,7 +443,8 @@ export class Workflow extends Context.Tag("@runbox/Workflow")<
                 yield* git.updateSubmodules(state)
                 yield* git.syncEnvironment({ ...state, source: rollbackSource })
                 if (rollbackSource.kind === "worktree") {
-                  yield* sourceSync.reconcile(rollbackSource)
+                  const result = yield* sourceSync.reconcile(rollbackSource)
+                  if (result.setupChanged) yield* supervisor.invalidatePreparation(rollbackSource.commit)
                   if (keepWatching) yield* watchSource(rollbackSource, packagePath)
                 }
                 yield* restartAfterMove(rollbackSource, false)
@@ -503,13 +504,6 @@ export class Workflow extends Context.Tag("@runbox/Workflow")<
           }
           const sourcePath = source.worktreePath
           yield* sourceSync.watch(source, () => handleInvalidation(sourcePath, packagePath))
-          const result = yield* sourceSync.reconcile(source).pipe(Effect.tapError(() =>
-            watchedCommands().pipe(
-              Effect.flatMap((owners) => owners.length === 0 ? sourceSync.unwatch : Effect.void),
-              Effect.catchAll(() => Effect.void),
-            )
-          ))
-          if (result.setupChanged) yield* supervisor.invalidatePreparation(source.commit)
         })
 
         const cleanupUnownedWatcher = () => watchedCommands().pipe(
@@ -566,7 +560,8 @@ export class Workflow extends Context.Tag("@runbox/Workflow")<
           }
           const watched = active.find((record) => record.sourceWatch)
           if (watched !== undefined && source.kind === "worktree") {
-            yield* sourceSync.reconcile(source)
+            const result = yield* sourceSync.reconcile(source)
+            if (result.setupChanged) yield* supervisor.invalidatePreparation(source.commit)
             yield* watchSource(source, watched.packagePath)
             yield* startWatchGuard()
           }

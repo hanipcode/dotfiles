@@ -142,5 +142,6 @@ describe("runbox forward", () => {
     })
 
     run(root, env, "stop", "all", "--json")
+    run(root, env, "shutdown", "--json")
   }, 60_000)
 })

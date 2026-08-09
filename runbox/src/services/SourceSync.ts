@@ -1,7 +1,7 @@
 import watcher, { type AsyncSubscription } from "@parcel/watcher"
 import { Context, Effect, Layer, Ref, Runtime } from "effect"
 import { chmod, link, lstat, mkdir, readFile, readlink, rename, rm, symlink, writeFile } from "node:fs/promises"
-import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path"
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { createHash, randomUUID } from "node:crypto"
 import type { ProjectContext, SourceRef, SyncResult, SyncSnapshot } from "../domain.ts"
 import { RunboxError } from "../errors.ts"
@@ -68,6 +68,10 @@ const isSetupPath = (path: string): boolean => {
   return setupNames.has(name) || path.startsWith(".agents/runbox/") ||
     (name.startsWith(".env") && name.endsWith(".example"))
 }
+
+const sameEntry = (left: ManifestEntry | undefined, right: ManifestEntry | undefined): boolean =>
+  left?.kind === right?.kind && left?.origin === right?.origin && left?.digest === right?.digest &&
+  left?.mode === right?.mode && left?.target === right?.target
 
 const safeRelativePath = (path: string): boolean => {
   if (path === "" || path === "." || isAbsolute(path)) return false
@@ -174,6 +178,9 @@ export class SourceSync extends Context.Tag("@runbox/SourceSync")<
         let watchedPath: string | null = null
         let watchedCommit: string | null = null
         let headPollRunning = false
+        let ignoreCheckRunning = false
+        const pendingIgnorePaths = new Set<string>()
+        const ignoreCache = new Map<string, boolean>()
 
         const filesystem = <A>(operation: string, path: string, run: () => Promise<A>) =>
           Effect.tryPromise({
@@ -643,7 +650,7 @@ export class SourceSync extends Context.Tag("@runbox/SourceSync")<
             const setupChanged = [...new Set([
               ...Object.keys(previousEntries),
               ...Object.keys(discovered.entries),
-            ])].some(isSetupPath)
+            ])].some((path) => isSetupPath(path) && !sameEntry(previousEntries[path], discovered.entries[path]))
             const mode = subscription === null ? "off" as const : "watch" as const
             yield* Ref.set(snapshotRef, {
               mode,
@@ -699,6 +706,49 @@ export class SourceSync extends Context.Tag("@runbox/SourceSync")<
           debounceTimer = null
           headTimer = null
           retryTimer = null
+        }
+
+        const checkIgnoredPaths = Effect.fn("SourceSync.checkIgnoredPaths")(function* (
+          sourcePath: string,
+          paths: ReadonlyArray<string>,
+        ) {
+          const unknown = paths.filter((path) => !ignoreCache.has(path))
+          for (let index = 0; index < unknown.length; index += 64) {
+            const batch = unknown.slice(index, index + 64)
+            const result = yield* runGit(sourcePath, ["check-ignore", "--", ...batch], true)
+            const ignored = new Set(result.stdout.split("\n").filter(Boolean))
+            for (const path of batch) ignoreCache.set(path, ignored.has(path))
+          }
+          while (ignoreCache.size > 2_048) {
+            const oldest = ignoreCache.keys().next().value
+            if (oldest === undefined) break
+            ignoreCache.delete(oldest)
+          }
+          return paths.filter((path) => ignoreCache.get(path) !== true)
+        })
+
+        const filterWatchEvents = (
+          sourcePath: string,
+          paths: ReadonlyArray<string>,
+          onRelevant: () => void,
+        ) => {
+          for (const path of paths) {
+            if (path === "" || path === "." || path.startsWith(".git/")) continue
+            pendingIgnorePaths.add(path)
+          }
+          if (ignoreCheckRunning || pendingIgnorePaths.size === 0) return
+          ignoreCheckRunning = true
+          runFork(Effect.gen(function* () {
+            do {
+              const pathsToCheck = [...pendingIgnorePaths]
+              pendingIgnorePaths.clear()
+              const relevant = yield* checkIgnoredPaths(sourcePath, pathsToCheck)
+              if (relevant.length > 0) onRelevant()
+            } while (pendingIgnorePaths.size > 0)
+          }).pipe(
+            Effect.catchAll(() => Effect.void),
+            Effect.ensuring(Effect.sync(() => { ignoreCheckRunning = false })),
+          ))
         }
 
         const unsubscribeRaw = Effect.fn("SourceSync.unsubscribeRaw")(function* () {
@@ -772,7 +822,11 @@ export class SourceSync extends Context.Tag("@runbox/SourceSync")<
                   }
                   return
                 }
-                if (events.length > 0) invalidate()
+                if (events.length > 0) {
+                  const paths = events.map((event) => relative(sourcePath, event.path).replaceAll("\\", "/"))
+                  if (paths.some((path) => path === ".gitignore" || path.endsWith("/.gitignore"))) ignoreCache.clear()
+                  filterWatchEvents(sourcePath, paths, invalidate)
+                }
               }, { ignore: [".git", ".git/**", "**/.git/**"] })
               if (activeGeneration !== generation) {
                 await next.unsubscribe()

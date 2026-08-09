@@ -89,7 +89,7 @@ export interface HerdrClient {
   ) => Effect.Effect<unknown, HerdrError | HerdrSpawnError>
   readonly worktreeCreate: (
     branch: string,
-    options?: { readonly cwd?: string; readonly focus?: boolean },
+    options?: { readonly cwd?: string; readonly base?: string; readonly focus?: boolean },
   ) => Effect.Effect<unknown, HerdrError | HerdrSpawnError>
   readonly worktreeRemove: (
     workspaceId: string,
@@ -188,6 +188,7 @@ const make = (): HerdrClient => {
     worktreeCreate: (branch, options) => {
       const args = ["worktree", "create", "--branch", branch]
       if (options?.cwd !== undefined) args.push("--cwd", options.cwd)
+      if (options?.base !== undefined) args.push("--base", options.base)
       args.push(options?.focus === false ? "--no-focus" : "--focus")
       return run(args)
     },

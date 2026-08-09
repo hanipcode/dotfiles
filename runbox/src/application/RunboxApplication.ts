@@ -68,11 +68,14 @@ export class RunboxApplication extends Context.Tag("@runbox/RunboxApplication")<
               retryable: true,
             })
           }
-          dirtySummary = yield* git.dirty(project)
-          if (dirtySummary !== "") {
+          const dirty = yield* git.dirty(project)
+          const watch = intent.type === "run" && intent.watch === true
+          if (dirty !== "" && !watch) {
+            dirtySummary = dirty
             dirtyFingerprint = yield* git.dirtyFingerprint(project)
             effects.push("Commit source worktree changes before switching")
           }
+          if (dirty !== "" && watch) effects.push("Sync source worktree changes to managed runner")
           if (intent.type === "run") yield* projects.requireScript(project, intent.script)
           const target = sourceRef(project)
           if (state.source === null || !sameSource(state.source, target)) {
@@ -181,7 +184,7 @@ export class RunboxApplication extends Context.Tag("@runbox/RunboxApplication")<
               retryable: true,
             })
           }
-          yield* git.requireClean(project)
+          if (intent.type !== "run" || intent.watch !== true) yield* git.requireClean(project)
           if (intent.type === "run") yield* projects.requireScript(project, intent.script)
           const state = yield* bootstrap(project)
           const socket = yield* ensureDaemonConfigured(project, state)
@@ -194,6 +197,7 @@ export class RunboxApplication extends Context.Tag("@runbox/RunboxApplication")<
               script: intent.script,
               args: intent.args,
               source: sourceRef(project),
+              watch: intent.watch === true,
               expectedRevision,
             })
             query = { repositoryId: intent.repoId, worktreePath: intent.worktreePath, commandId: `${project.packagePath === "" ? "." : project.packagePath}:${intent.script}` }

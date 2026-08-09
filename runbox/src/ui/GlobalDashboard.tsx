@@ -236,6 +236,7 @@ export const GlobalDashboard = ({ initial, initialIntent, onInspect, onPlan, onC
   const [filtering, setFiltering] = useState<FilterablePane | null>(null)
   const initialStarted = useRef(false)
   const requestGeneration = useRef(0)
+  const passiveInspection = useRef(false)
   const projectScroll = useRef<ScrollBoxRenderable>(null)
   const sourceScroll = useRef<ScrollBoxRenderable>(null)
   const commandScroll = useRef<ScrollBoxRenderable>(null)
@@ -313,6 +314,8 @@ export const GlobalDashboard = ({ initial, initialIntent, onInspect, onPlan, onC
   }
 
   const inspect = (query: InspectionQuery, interactive = true) => {
+    if (!interactive && passiveInspection.current) return
+    if (!interactive) passiveInspection.current = true
     const generation = ++requestGeneration.current
     if (interactive) {
       setBusy(true)
@@ -323,6 +326,7 @@ export const GlobalDashboard = ({ initial, initialIntent, onInspect, onPlan, onC
     }).catch((cause) => {
       if (interactive && generation === requestGeneration.current) setFeedback({ text: String(cause), kind: "error" })
     }).finally(() => {
+      if (!interactive) passiveInspection.current = false
       if (interactive && generation === requestGeneration.current) setBusy(false)
     })
   }

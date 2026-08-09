@@ -18,89 +18,117 @@ import type {
 import type { GitError } from "@heherdr/framework/git/Client.ts"
 import { WorktreeUi, type RemoveOutcome } from "./Ui.tsx"
 
-const handler = Effect.gen(function* () {
-  const herdr = yield* HerdrClient.HerdrClient
-  const git = yield* GitClient.GitClient
-  const runtime = yield* Effect.runtime<never>()
-  const runPromise = Runtime.runPromise(runtime)
-  const runPromiseExit = Runtime.runPromiseExit(runtime)
+const handler = (startInCreate: boolean) =>
+  Effect.gen(function* () {
+    const herdr = yield* HerdrClient.HerdrClient
+    const git = yield* GitClient.GitClient
+    const runtime = yield* Effect.runtime<never>()
+    const runPromise = Runtime.runPromise(runtime)
+    const runPromiseExit = Runtime.runPromiseExit(runtime)
 
-  const initial = yield* herdr.worktreeList()
-  const repoRoot = initial.source.repo_root
+    const initial = yield* herdr.worktreeList()
+    const repoRoot = initial.source.repo_root
+    const branches = yield* git.branches(repoRoot)
+    const sourceWorktree = initial.worktrees.find(
+      (worktree) => worktree.path === initial.source.source_checkout_path,
+    )
+    const initialBase = sourceWorktree?.branch ?? branches[0] ?? null
 
-  let chosen: WorktreeInfo | undefined
+    let chosen: WorktreeInfo | undefined
+    let chosenCreate: { readonly branch: string; readonly base: string } | undefined
 
-  const remove = async (worktree: WorktreeInfo, force: boolean): Promise<RemoveOutcome> => {
-    // A locked checkout is refused by `git worktree remove` even with --force,
-    // so forcing has to unlock first. Failure here is non-fatal: the removal
-    // below will report the real reason.
-    if (force) {
-      await runPromiseExit(git.unlockWorktree(repoRoot, worktree.path))
+    const remove = async (worktree: WorktreeInfo, force: boolean): Promise<RemoveOutcome> => {
+      // A locked checkout is refused by `git worktree remove` even with --force,
+      // so forcing has to unlock first. Failure here is non-fatal: the removal
+      // below will report the real reason.
+      if (force) {
+        await runPromiseExit(git.unlockWorktree(repoRoot, worktree.path))
+      }
+
+      // herdr can only remove a worktree it holds open as a workspace; anything
+      // else has to go through git directly. Annotated because the two branches
+      // have different error types and TS will not widen the union on its own.
+      const effect: Effect.Effect<unknown, HerdrError | HerdrSpawnError | GitError> =
+        worktree.open_workspace_id === undefined
+          ? git.removeWorktree(repoRoot, worktree.path, { force })
+          : herdr.worktreeRemove(worktree.open_workspace_id, { force })
+
+      const exit = await runPromiseExit(effect)
+      if (Exit.isSuccess(exit)) {
+        return { ok: true, message: `removed ${worktree.branch ?? worktree.path}` }
+      }
+
+      const error = Exit.causeOption(exit)
+      const reason = error._tag === "Some" ? String(error.value) : "unknown error"
+      const hint = reason.includes("locked")
+        ? " — locked, press Y to unlock and force"
+        : reason.includes("modified or untracked")
+          ? " — has uncommitted changes, press Y to force"
+          : ""
+      return { ok: false, message: `${reason.split("\n")[0] ?? reason}${hint}` }
     }
 
-    // herdr can only remove a worktree it holds open as a workspace; anything
-    // else has to go through git directly. Annotated because the two branches
-    // have different error types and TS will not widen the union on its own.
-    const effect: Effect.Effect<unknown, HerdrError | HerdrSpawnError | GitError> =
-      worktree.open_workspace_id === undefined
-        ? git.removeWorktree(repoRoot, worktree.path, { force })
-        : herdr.worktreeRemove(worktree.open_workspace_id, { force })
+    yield* runApp(
+      <WorktreeUi
+        data={initial}
+        branches={branches}
+        initialBase={initialBase}
+        startInCreate={startInCreate}
+        onOpen={(worktree) => {
+          chosen = worktree
+        }}
+        onCreate={(branch, base) => {
+          chosenCreate = { branch, base }
+        }}
+        onInspect={async (worktree) => {
+          // A failed inspection must not reject into React — degrade to "unknown"
+          // and let the removal itself report the real problem.
+          const exit = await runPromiseExit(git.safety(repoRoot, worktree.path, worktree.branch))
+          return Exit.isSuccess(exit)
+            ? exit.value
+            : { dirtyFiles: 0, unmergedCommits: 0, pushedTo: null, locked: false, lockReason: null }
+        }}
+        onRemove={remove}
+        onRefresh={() => runPromise(herdr.worktreeList())}
+      />,
+    )
 
-    const exit = await runPromiseExit(effect)
-    if (Exit.isSuccess(exit)) {
-      return { ok: true, message: `removed ${worktree.branch ?? worktree.path}` }
+    if (chosenCreate !== undefined) {
+      yield* herdr.worktreeCreate(chosenCreate.branch, {
+        cwd: repoRoot,
+        base: chosenCreate.base,
+        focus: true,
+      })
+      return
     }
 
-    const error = Exit.causeOption(exit)
-    const reason = error._tag === "Some" ? String(error.value) : "unknown error"
-    const hint = reason.includes("locked")
-      ? " — locked, press Y to unlock and force"
-      : reason.includes("modified or untracked")
-        ? " — has uncommitted changes, press Y to force"
-        : ""
-    return { ok: false, message: `${reason.split("\n")[0] ?? reason}${hint}` }
-  }
+    if (chosen === undefined) return
 
-  yield* runApp(
-    <WorktreeUi
-      data={initial}
-      onOpen={(worktree) => {
-        chosen = worktree
-      }}
-      onInspect={async (worktree) => {
-        // A failed inspection must not reject into React — degrade to "unknown"
-        // and let the removal itself report the real problem.
-        const exit = await runPromiseExit(git.safety(repoRoot, worktree.path, worktree.branch))
-        return Exit.isSuccess(exit)
-          ? exit.value
-          : { dirtyFiles: 0, unmergedCommits: 0, pushedTo: null, locked: false, lockReason: null }
-      }}
-      onRemove={remove}
-      onRefresh={() => runPromise(herdr.worktreeList())}
-    />,
+    // Acting after teardown keeps herdr's focus change from fighting the
+    // alternate screen we were just drawing into.
+    if (chosen.open_workspace_id !== undefined) {
+      yield* herdr.workspaceFocus(chosen.open_workspace_id)
+    } else {
+      yield* herdr.worktreeOpen({ path: chosen.path }, { focus: true })
+    }
+  }).pipe(
+    Effect.catchTags({
+      HerdrError: (error) =>
+        error.code === "not_git_worktree"
+          ? Console.error("heherdr worktree: run this from a workspace inside a git repository.")
+          : Console.error(`heherdr worktree: ${error.code}: ${error.message}`),
+      HerdrSpawnError: (error) => Console.error(`heherdr worktree: ${error.reason}`),
+      GitError: (error) => Console.error(`heherdr worktree: git ${error.reason}`),
+      RenderError: (error) => Console.error(`heherdr worktree: render failed: ${error.reason}`),
+    }),
   )
-
-  if (chosen === undefined) return
-
-  // Acting after teardown keeps herdr's focus change from fighting the
-  // alternate screen we were just drawing into.
-  if (chosen.open_workspace_id !== undefined) {
-    yield* herdr.workspaceFocus(chosen.open_workspace_id)
-  } else {
-    yield* herdr.worktreeOpen({ path: chosen.path }, { focus: true })
-  }
-}).pipe(
-  Effect.catchTags({
-    HerdrError: (error) =>
-      error.code === "not_git_worktree"
-        ? Console.error("heherdr worktree: run this from a workspace inside a git repository.")
-        : Console.error(`heherdr worktree: ${error.code}: ${error.message}`),
-    HerdrSpawnError: (error) => Console.error(`heherdr worktree: ${error.reason}`),
-    RenderError: (error) => Console.error(`heherdr worktree: render failed: ${error.reason}`),
-  }),
-)
 
 export const worktreeCommand = Command.make("worktree").pipe(
   Command.withDescription("Manage this project's git worktrees"),
-  Command.withHandler(() => handler),
+  Command.withHandler(() => handler(false)),
+)
+
+export const worktreeFromCommand = Command.make("worktree-from").pipe(
+  Command.withDescription("Create a worktree from a selected base branch"),
+  Command.withHandler(() => handler(true)),
 )

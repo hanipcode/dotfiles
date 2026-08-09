@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { Effect, Schema } from "effect"
 
 /** Model identifiers used by the initial reviewer and final adjudicator tiers. */
 export const ReviewModels = Schema.Struct({
@@ -22,9 +22,18 @@ export const FindingLocation = Schema.Struct({
 })
 export interface FindingLocation extends Schema.Schema.Type<typeof FindingLocation> {}
 
-/** A specialist finding before Sol adjudicates it. */
-export const RawFinding = Schema.Struct({
-  category: Schema.Literal("security", "standards", "quality", "goals"),
+/** Finding categories that Sol adjudicates after Luna's local review. */
+export const AdjudicatedFindingCategory = Schema.Literal("security", "standards", "quality", "goals")
+export const DirectFindingCategory = Schema.Literal("documentation", "repository-standards")
+export const FindingCategory = Schema.Union(AdjudicatedFindingCategory, DirectFindingCategory)
+export type FindingCategory = Schema.Schema.Type<typeof FindingCategory>
+export type DirectFindingCategory = Schema.Schema.Type<typeof DirectFindingCategory>
+
+/** One Luna finding with lifecycle data for prior-review reconciliation. */
+export const LunaFinding = Schema.Struct({
+  id: Schema.NullOr(Schema.String),
+  status: Schema.Literal("new", "open", "resolved", "superseded", "suppressed"),
+  category: FindingCategory,
   severity: Schema.Literal("critical", "warning", "suggestion"),
   title: Schema.String,
   impact: Schema.String,
@@ -32,20 +41,29 @@ export const RawFinding = Schema.Struct({
   rule: Schema.NullOr(Schema.String),
   location: Schema.NullOr(FindingLocation),
 })
-export interface RawFinding extends Schema.Schema.Type<typeof RawFinding> {}
+export interface LunaFinding extends Schema.Schema.Type<typeof LunaFinding> {}
 
-/** Structured result required from each Luna reviewer. */
-export const SpecialistOutput = Schema.Struct({
+/** A changed seam that requires repository-wide reasoning from Sol. */
+export const ReviewSeam = Schema.Struct({
+  category: AdjudicatedFindingCategory,
   summary: Schema.String,
-  findings: Schema.Array(RawFinding),
+  paths: Schema.Array(Schema.String),
 })
-export interface SpecialistOutput extends Schema.Schema.Type<typeof SpecialistOutput> {}
+export interface ReviewSeam extends Schema.Schema.Type<typeof ReviewSeam> {}
 
-/** A finding after Sol has validated, merged, and classified its lifecycle. */
-export const CanonicalFinding = Schema.Struct({
+/** Structured result required from each semantic Luna review unit. */
+export const LunaOutput = Schema.Struct({
+  summary: Schema.String,
+  reviewedPaths: Schema.Array(Schema.String),
+  seamNotes: Schema.Array(ReviewSeam),
+  findings: Schema.Array(LunaFinding),
+})
+export interface LunaOutput extends Schema.Schema.Type<typeof LunaOutput> {}
+
+/** A final finding with a stable lifecycle, produced by Sol or a Luna-final reviewer. */
+const canonicalFindingFields = {
   id: Schema.NullOr(Schema.String),
   status: Schema.Literal("new", "open", "resolved", "superseded", "suppressed"),
-  category: Schema.Literal("security", "standards", "quality", "goals"),
   severity: Schema.Literal("critical", "warning", "suggestion"),
   title: Schema.String,
   impact: Schema.String,
@@ -53,15 +71,35 @@ export const CanonicalFinding = Schema.Struct({
   rule: Schema.NullOr(Schema.String),
   location: Schema.NullOr(FindingLocation),
   sources: Schema.Array(Schema.String),
+}
+
+export const CanonicalFinding = Schema.Struct({
+  ...canonicalFindingFields,
+  category: FindingCategory,
 })
 export interface CanonicalFinding extends Schema.Schema.Type<typeof CanonicalFinding> {}
+
+const AdjudicatedCanonicalFinding = Schema.Struct({
+  ...canonicalFindingFields,
+  category: AdjudicatedFindingCategory,
+})
 
 /** Structured result required from each Sol stage. */
 export const CoordinatorOutput = Schema.Struct({
   summary: Schema.String,
-  findings: Schema.Array(CanonicalFinding),
+  findings: Schema.Array(AdjudicatedCanonicalFinding),
 })
 export interface CoordinatorOutput extends Schema.Schema.Type<typeof CoordinatorOutput> {}
+
+/** One bounded, semantically grouped patch assigned to a Luna reviewer. */
+export interface ReviewUnit {
+  readonly id: string
+  readonly label: string
+  readonly paths: ReadonlyArray<string>
+  readonly patchPath: string
+  readonly patchLines: number
+  readonly patchBytes: number
+}
 
 /** Immutable Git and filesystem input reviewed by every model session. */
 export interface ReviewSnapshot {
@@ -76,13 +114,16 @@ export interface ReviewSnapshot {
   readonly runtimeDirectory: string
   readonly snapshotDirectory: string
   readonly patchPath: string
+  readonly reviewUnitManifestPath: string
+  readonly reviewUnits: ReadonlyArray<ReviewUnit>
+  readonly repositoryGuidanceManifestPath: string
   readonly changedPaths: ReadonlyArray<string>
   readonly skippedPaths: ReadonlyArray<string>
   readonly historyPath: string
   readonly runDirectory: string
 }
 
-/** Prior completed result supplied to incremental reviewers. */
+/** Prior completed result supplied to later reviewers. */
 export const PriorReview = Schema.Struct({
   runId: Schema.String,
   branch: Schema.String,
@@ -91,7 +132,6 @@ export const PriorReview = Schema.Struct({
   mergeBase: Schema.String,
   head: Schema.String,
   effectiveTreeId: Schema.String,
-  snapshotDirectory: Schema.String,
   promptVersion: Schema.String,
   standardsDigest: Schema.String,
   models: ReviewModels,
@@ -110,12 +150,13 @@ export const ReviewResult = Schema.Struct({
   mergeBase: Schema.String,
   head: Schema.String,
   effectiveTreeId: Schema.String,
-  snapshotDirectory: Schema.String,
   promptVersion: Schema.String,
   standardsDigest: Schema.String,
   models: ReviewModels,
   mode: Schema.Literal("full", "incremental", "cache_hit"),
   complete: Schema.Boolean,
+  costUsd: Schema.Number.pipe(Schema.optionalWith({ default: () => 0 })),
+  cachedInputPercent: Schema.NullOr(Schema.Number).pipe(Schema.optionalWith({ default: () => null })),
   summary: Schema.String,
   findings: Schema.Array(CanonicalFinding),
   historyPath: Schema.String,
@@ -127,7 +168,26 @@ export interface ReviewRequest {
   readonly cwd: string
   readonly baseRef?: string
   readonly models: ReviewModels
+  readonly onProgress?: ReviewProgressReporter
 }
+
+/** Safe progress events emitted by one review run. */
+export type ReviewProgressEvent =
+  | { readonly type: "snapshot_started" }
+  | { readonly type: "snapshot_ready"; readonly changedPathCount: number; readonly unitCount: number }
+  | { readonly type: "cache_hit" }
+  | { readonly type: "stage_started"; readonly role: string }
+  | { readonly type: "stage_activity"; readonly role: string; readonly detail: string }
+  | {
+      readonly type: "stage_finished"
+      readonly role: string
+      readonly status: "succeeded" | "failed"
+      readonly findingCount: number
+    }
+  | { readonly type: "review_finished"; readonly complete: boolean }
+
+/** Per-run observer for terminal or API progress presentation. */
+export type ReviewProgressReporter = (event: ReviewProgressEvent) => Effect.Effect<void>
 
 /** One isolated application-level model role. */
 export interface ReviewerTask {
@@ -136,6 +196,12 @@ export interface ReviewerTask {
   readonly system: string
   readonly prompt: string
   readonly allowTracker: boolean
+}
+
+/** One Luna task and the semantic unit it must cover completely. */
+export interface LunaReviewerTask {
+  readonly unit: ReviewUnit
+  readonly task: ReviewerTask
 }
 
 /** Raw successful response from one OpenCode session. */

@@ -232,6 +232,8 @@ describe("runbox CLI", () => {
       const stop = run(feature, stackEnv, "stop", "all", "--json")
       expect(stop.status, stop.stderr).toBe(0)
       expect(stop.stdout).toContain('"status": "completed"')
+      const shutdown = run(feature, stackEnv, "shutdown", "--json")
+      expect(shutdown.status, shutdown.stderr).toBe(0)
 
       const statePath = join(home, "runbox", "state")
       const repoIds = yield* Effect.promise(async () => {

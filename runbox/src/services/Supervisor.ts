@@ -542,7 +542,7 @@ export class Supervisor extends Context.Tag("@runbox/Supervisor")<
           yield* Effect.forEach(records, (record) =>
             logs.tail(record.logFile).pipe(
               Effect.tap((text) => Effect.sync(() => { outputLogs[record.id] = text })),
-            ), { concurrency: "unbounded", discard: true })
+            ), { concurrency: 8, discard: true })
           outputLogs.setup = yield* logs.tail(join(paths.repoState(state.repoId), "logs", "setup.log"))
           const pids = records.flatMap((record) => record.pid === null ? [] : [record.pid])
           const byPid = yield* metrics.forPids(pids)

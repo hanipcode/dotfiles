@@ -306,9 +306,10 @@ worktrees offer a manual commit message, a Luna-generated message, or cancellati
 Legacy storage migration is included in the plan and still follows the existing rule
 that active repositories are not interrupted.
 
-Direct commands such as `runbox dev` open the same global dashboard focused on that
-command while activation proceeds. Active gh-stack provenance is displayed as a source;
-use `runbox stack <command>` to select and activate a stack.
+Direct commands such as `runbox dev` and `runbox dev -w` open the same global dashboard
+focused on that command while activation proceeds. Watched runs keep dirty source files
+as the sync overlay instead of requesting a commit. Active gh-stack provenance is
+displayed as a source; use `runbox stack <command>` to select and activate a stack.
 
 On desktop-sized terminals, repositories, sources, and commands with active status share
 the top row. Each list has selection-aware scrolling and a scrollbar when its contents

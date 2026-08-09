@@ -8,6 +8,12 @@ import {
   type ForwardStart,
 } from "./domain.ts"
 import { RunboxError } from "./errors.ts"
+import {
+  encodeFrame,
+  MAX_FORWARD_FRAME_BYTES,
+  MAX_REQUEST_FRAME_BYTES,
+  MAX_RESPONSE_FRAME_BYTES,
+} from "./ipcProtocol.ts"
 
 export const request = Effect.fn("Ipc.request")(function* (
   socketPath: string,
@@ -35,9 +41,26 @@ export const request = Effect.fn("Ipc.request")(function* (
       })))
     }, timeoutMs)
     socket.setEncoding("utf8")
-    socket.once("connect", () => socket.write(`${JSON.stringify(value)}\n`))
+    socket.once("connect", () => {
+      try {
+        socket.write(encodeFrame(value, MAX_REQUEST_FRAME_BYTES))
+      } catch (cause) {
+        socket.destroy()
+        finish(Effect.fail(new RunboxError({ operation: "encode daemon request", message: String(cause) })))
+      }
+    })
     socket.on("data", (chunk: string) => {
       response += chunk
+      if (Buffer.byteLength(response) > MAX_RESPONSE_FRAME_BYTES) {
+        socket.destroy()
+        finish(Effect.fail(new RunboxError({
+          operation: "read daemon response",
+          message: `daemon response exceeds ${MAX_RESPONSE_FRAME_BYTES} bytes`,
+          code: "INVALID_RESPONSE",
+          suggestion: "Inspect the daemon state and retry with a narrower request.",
+        })))
+        return
+      }
       const newline = response.indexOf("\n")
       if (newline === -1) return
       const line = response.slice(0, newline)
@@ -90,7 +113,14 @@ export const requestForward = Effect.fn("Ipc.requestForward")(function* (
       resume(effect)
     }
     socket.setEncoding("utf8")
-    socket.once("connect", () => socket.write(`${JSON.stringify(value)}\n`))
+    socket.once("connect", () => {
+      try {
+        socket.write(encodeFrame(value, MAX_REQUEST_FRAME_BYTES))
+      } catch (cause) {
+        socket.destroy()
+        finish(Effect.fail(new RunboxError({ operation: "encode forwarded command request", message: String(cause) })))
+      }
+    })
     socket.on("data", (chunk: string) => {
       response += chunk
       while (true) {
@@ -98,6 +128,16 @@ export const requestForward = Effect.fn("Ipc.requestForward")(function* (
         if (newline === -1) return
         const line = response.slice(0, newline)
         response = response.slice(newline + 1)
+        if (Buffer.byteLength(line) > MAX_RESPONSE_FRAME_BYTES) {
+          socket.destroy()
+          finish(Effect.fail(new RunboxError({
+            operation: "read forwarded command response",
+            message: `daemon response frame exceeds ${MAX_RESPONSE_FRAME_BYTES} bytes`,
+            code: "INVALID_RESPONSE",
+            suggestion: "Upgrade runbox and retry the command.",
+          })))
+          return
+        }
         try {
           const parsed: unknown = JSON.parse(line)
           if (
@@ -111,6 +151,9 @@ export const requestForward = Effect.fn("Ipc.requestForward")(function* (
               start = frame.data
               callbacks.onStart(frame.data)
             } else {
+              if (Buffer.byteLength(line) > MAX_FORWARD_FRAME_BYTES) {
+                throw new Error(`forward output frame exceeds ${MAX_FORWARD_FRAME_BYTES} bytes`)
+              }
               callbacks.onOutput(frame.stream, frame.text)
             }
             continue

@@ -5,8 +5,37 @@ import { createServer, type Socket } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { request, requestForward } from "../src/ipc.ts"
+import { encodeFrame, MAX_RESPONSE_FRAME_BYTES, splitUtf8 } from "../src/ipcProtocol.ts"
 
 describe("IPC", () => {
+  it("keeps UTF-8 output frames bounded without splitting characters", () => {
+    const text = "a".repeat(100) + "🙂".repeat(100)
+    const parts = splitUtf8(text, 64)
+
+    expect(parts.join("")).toBe(text)
+    expect(parts.every((part) => Buffer.byteLength(part) <= 64)).toBe(true)
+  })
+
+  it("rejects oversized response frames before decoding them", async () => {
+    const root = await mkdtemp(join(tmpdir(), "runbox-ipc-limit-"))
+    const socketPath = join(root, "daemon.sock")
+    const server = createServer((socket) => {
+      socket.on("error", () => {})
+      socket.once("data", () => socket.write("x".repeat(MAX_RESPONSE_FRAME_BYTES + 1)))
+    })
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve))
+
+    const exit = await Effect.runPromiseExit(request(socketPath, { type: "ping" }, 1_000))
+
+    expect(exit._tag).toBe("Failure")
+    server.close()
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it("rejects frames that exceed their configured encoding limit", () => {
+    expect(() => encodeFrame("x".repeat(100), 8)).toThrow(/exceeds 8 bytes/)
+  })
+
   it("fails when a daemon closes without responding", async () => {
     const root = await mkdtemp(join(tmpdir(), "runbox-ipc-"))
     const socketPath = join(root, "daemon.sock")

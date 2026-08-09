@@ -12,17 +12,24 @@ import { useCallback, useMemo, useRef, useState } from "react"
 import { useExit, useModal, theme, type ModeSpec } from "@heherdr/framework"
 import type { WorktreeInfo, WorktreeList } from "@heherdr/framework/herdr/Client.ts"
 import type { WorktreeSafety } from "@heherdr/framework/git/Client.ts"
+import { filterBranches } from "./model.ts"
 
-type Mode = "normal" | "filter" | "confirm"
+type Mode = "normal" | "filter" | "confirm" | "create"
 
 export interface RemoveOutcome {
   readonly ok: boolean
   readonly message: string
 }
 
+type CreateField = "branch" | "base"
+
 export interface WorktreeUiProps {
   readonly data: WorktreeList
+  readonly branches: ReadonlyArray<string>
+  readonly initialBase: string | null
+  readonly startInCreate?: boolean
   readonly onOpen: (worktree: WorktreeInfo) => void
+  readonly onCreate: (branch: string, base: string) => void
   /** Merge/dirty/lock state, fetched lazily when the confirm gate opens. */
   readonly onInspect: (worktree: WorktreeInfo) => Promise<WorktreeSafety>
   readonly onRemove: (worktree: WorktreeInfo, force: boolean) => Promise<RemoveOutcome>
@@ -31,7 +38,11 @@ export interface WorktreeUiProps {
 
 export const WorktreeUi = ({
   data,
+  branches,
+  initialBase,
+  startInCreate = false,
   onOpen,
+  onCreate,
   onInspect,
   onRemove,
   onRefresh,
@@ -40,12 +51,38 @@ export const WorktreeUi = ({
   const [list, setList] = useState(data)
   const [query, setQuery] = useState("")
   const [cursor, setCursor] = useState(0)
+  const [createField, setCreateField] = useState<CreateField>("branch")
+  const [createBranch, setCreateBranch] = useState("")
+  const [createBaseQuery, setCreateBaseQuery] = useState("")
+  const [createBaseCursor, setCreateBaseCursor] = useState(() =>
+    initialBase === null ? 0 : Math.max(branches.indexOf(initialBase), 0),
+  )
   const [status, setStatus] = useState<string | null>(null)
   const [safety, setSafety] = useState<WorktreeSafety | null>(null)
   const [busy, setBusy] = useState(false)
 
   // useModal is called below, so bindings reach setMode through a ref.
   const setModeRef = useRef<(mode: Mode) => void>(() => {})
+
+  const baseOptions = useMemo(
+    () =>
+      initialBase !== null && !branches.includes(initialBase)
+        ? [initialBase, ...branches]
+        : branches,
+    [branches, initialBase],
+  )
+  const visibleBaseOptions = useMemo(() => {
+    return filterBranches(baseOptions, createBaseQuery)
+  }, [baseOptions, createBaseQuery])
+  const baseIndex = Math.min(
+    createBaseCursor,
+    Math.max(visibleBaseOptions.length - 1, 0),
+  )
+  const baseWindowStart = Math.min(
+    Math.max(baseIndex - 3, 0),
+    Math.max(visibleBaseOptions.length - 8, 0),
+  )
+  const selectedBase = visibleBaseOptions[baseIndex] ?? createBaseQuery.trim()
 
   const visible = useMemo(() => {
     const q = query.toLowerCase()
@@ -89,6 +126,80 @@ export const WorktreeUi = ({
     void onInspect(selected).then(setSafety)
   }, [selected, onInspect])
 
+  const beginCreate = useCallback(() => {
+    setCreateField("branch")
+    setCreateBranch("")
+    setCreateBaseQuery("")
+    setCreateBaseCursor(initialBase === null ? 0 : Math.max(branches.indexOf(initialBase), 0))
+    setStatus(null)
+    setModeRef.current("create")
+  }, [branches, initialBase])
+
+  const cancelCreate = useCallback(() => {
+    setStatus(null)
+    setModeRef.current("normal")
+  }, [])
+
+  const moveBase = useCallback(
+    (delta: number) =>
+      setCreateBaseCursor((current) => {
+        if (visibleBaseOptions.length === 0) return 0
+        const next = current + delta
+        return next < 0
+          ? 0
+          : next >= visibleBaseOptions.length
+            ? visibleBaseOptions.length - 1
+            : next
+      }),
+    [visibleBaseOptions.length],
+  )
+
+  const submitCreate = useCallback(() => {
+    const branch = createBranch.trim()
+    const base = selectedBase.trim()
+    if (branch === "") {
+      setStatus("enter a new branch name")
+      setCreateField("branch")
+      return
+    }
+    if (base === "") {
+      setStatus("choose or enter a base branch")
+      setCreateField("base")
+      return
+    }
+    onCreate(branch, base)
+    exit()
+  }, [createBranch, selectedBase, onCreate, exit])
+
+  const appendCreateText = useCallback(
+    (char: string) => {
+      if (createField === "branch") {
+        setCreateBranch((value) => value + char)
+      } else {
+        setCreateBaseQuery((value) => value + char)
+        setCreateBaseCursor(0)
+      }
+    },
+    [createField],
+  )
+
+  const backspaceCreate = useCallback(() => {
+    if (createField === "branch") {
+      setCreateBranch((value) => value.slice(0, -1))
+    } else {
+      setCreateBaseQuery((value) => value.slice(0, -1))
+      setCreateBaseCursor(0)
+    }
+  }, [createField])
+
+  const clearCreateField = useCallback(() => {
+    if (createField === "branch") setCreateBranch("")
+    else {
+      setCreateBaseQuery("")
+      setCreateBaseCursor(0)
+    }
+  }, [createField])
+
   const performRemove = useCallback(
     (force: boolean) => {
       if (!selected || busy) return
@@ -127,6 +238,7 @@ export const WorktreeUi = ({
             },
           },
           d: { description: "remove", run: beginRemove },
+          n: { description: "new worktree from", run: beginCreate },
           r: { description: "reload", run: () => void refresh() },
           q: { description: "quit", run: exit },
           escape: { description: "quit", run: exit, hidden: true },
@@ -153,36 +265,117 @@ export const WorktreeUi = ({
           escape: { description: "cancel", run: () => setModeRef.current("normal"), hidden: true },
         },
       },
+      create: {
+        onText: appendCreateText,
+        onBackspace: backspaceCreate,
+        bindings: {
+          j: {
+            description: "down / type",
+            run: () => (createField === "base" ? moveBase(1) : appendCreateText("j")),
+          },
+          k: {
+            description: "up / type",
+            run: () => (createField === "base" ? moveBase(-1) : appendCreateText("k")),
+          },
+          tab: {
+            description: "next field",
+            run: () => setCreateField((field) => (field === "branch" ? "base" : "branch")),
+          },
+          "shift+tab": {
+            description: "previous field",
+            run: () => setCreateField((field) => (field === "branch" ? "base" : "branch")),
+            hidden: true,
+          },
+          return: { description: "create", run: submitCreate },
+          "ctrl+u": { description: "clear field", run: clearCreateField },
+          escape: { description: "cancel", run: cancelCreate },
+        },
+      },
     }),
     // Handlers close over selection and list length, so specs must be rebuilt
     // when those change or bindings would act on stale rows.
-    [move, visible.length, selected, exit, onOpen, beginRemove, performRemove, refresh],
+    [
+      move,
+      visible.length,
+      selected,
+      exit,
+      onOpen,
+      beginRemove,
+      beginCreate,
+      performRemove,
+      refresh,
+      createField,
+      appendCreateText,
+      moveBase,
+      submitCreate,
+      clearCreateField,
+      cancelCreate,
+      backspaceCreate,
+    ],
   )
 
-  const modal = useModal<Mode>({ initial: "normal", modes })
+  const modal = useModal<Mode>({ initial: startInCreate ? "create" : "normal", modes })
   setModeRef.current = modal.setMode
 
   return (
     <box style={{ flexDirection: "column", padding: 1, backgroundColor: theme.base }}>
-      <text style={{ fg: theme.mauve }}>{`worktrees — ${list.source.repo_name}`}</text>
-
-      <text style={{ fg: modal.mode === "filter" ? theme.text : theme.overlay0 }}>
-        {query === "" && modal.mode !== "filter" ? "/ filter" : `/${query}`}
-      </text>
-
-      <box style={{ flexDirection: "column", paddingTop: 1 }}>
-        {visible.length === 0 ? (
-          <text style={{ fg: theme.overlay0 }}>no matching worktrees</text>
-        ) : (
-          visible.map((w, i) => (
-            <text key={w.path} style={{ fg: i === index ? theme.text : theme.subtext0 }}>
-              {`${i === index ? "▸ " : "  "}${w.branch ?? "(detached)"}${
-                w.open_workspace_id ? "  ● open" : ""
-              }${w.is_linked_worktree ? "" : "  (main)"}`}
+      {modal.mode === "create" ? (
+        <>
+          <text style={{ fg: theme.mauve }}>new worktree from</text>
+          <text style={{ fg: theme.overlay0 }}>tab switches fields · j/k chooses a base branch</text>
+          <box style={{ flexDirection: "column", paddingTop: 1 }}>
+            <text style={{ fg: createField === "branch" ? theme.text : theme.subtext0 }}>
+              {`${createField === "branch" ? "▸ " : "  "}branch: ${createBranch || "(type a new branch)"}`}
             </text>
-          ))
-        )}
-      </box>
+            <text style={{ fg: createField === "base" ? theme.text : theme.subtext0 }}>
+              {`${createField === "base" ? "▸ " : "  "}from: ${selectedBase || "(type a ref)"}`}
+            </text>
+            {createField === "base" && createBaseQuery !== "" ? (
+              <text style={{ fg: theme.overlay0 }}>{`filter: ${createBaseQuery}`}</text>
+            ) : null}
+            {createField === "base" ? (
+              <box style={{ flexDirection: "column", paddingTop: 1 }}>
+                {visibleBaseOptions.length === 0 ? (
+                  <text style={{ fg: theme.overlay0 }}>no matching branches; Enter uses the typed ref</text>
+                ) : (
+                  visibleBaseOptions.slice(baseWindowStart, baseWindowStart + 8).map((branch, i) => (
+                    <text
+                      key={branch}
+                      style={{
+                        fg: i + baseWindowStart === baseIndex ? theme.text : theme.subtext0,
+                      }}
+                    >
+                      {`${i + baseWindowStart === baseIndex ? "▸ " : "  "}${branch}`}
+                    </text>
+                  ))
+                )}
+              </box>
+            ) : null}
+          </box>
+        </>
+      ) : (
+        <>
+          <text style={{ fg: theme.mauve }}>{`worktrees — ${list.source.repo_name}`}</text>
+
+          <text style={{ fg: modal.mode === "filter" ? theme.text : theme.overlay0 }}>
+            {query === "" && modal.mode !== "filter" ? "/ filter" : `/${query}`}
+          </text>
+
+          <box style={{ flexDirection: "column", paddingTop: 1 }}>
+            {visible.length === 0 ? (
+              <text style={{ fg: theme.overlay0 }}>no matching worktrees</text>
+            ) : (
+              visible.map((w, i) => (
+                <text key={w.path} style={{ fg: i === index ? theme.text : theme.subtext0 }}>
+                  {`${i === index ? "▸ " : "  "}${w.branch ?? "(detached)"}${
+                    w.open_workspace_id ? "  ● open" : ""
+                  }${w.is_linked_worktree ? "" : "  (main)"}`}
+                </text>
+              ))
+            )}
+          </box>
+        </>
+      )}
 
       {modal.mode === "confirm" && selected ? (
         <box style={{ flexDirection: "column", paddingTop: 1 }}>

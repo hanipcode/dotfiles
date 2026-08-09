@@ -1,10 +1,11 @@
 import { Effect } from "effect"
 import { createHash } from "node:crypto"
 import { spawn } from "node:child_process"
-import { lstat, mkdir, readFile, readlink, rm, writeFile } from "node:fs/promises"
+import { lstat, mkdir, readFile, readlink, realpath, rm, writeFile } from "node:fs/promises"
 import { basename, dirname, join, relative, resolve, sep } from "node:path"
 import { GitReviewError, UnstableSnapshotError } from "../errors.ts"
-import type { ReviewSnapshot } from "./domain.ts"
+import type { ReviewSnapshot, ReviewUnit } from "./domain.ts"
+import { planReviewUnits, type ReviewPatchFile } from "./review-units.ts"
 
 interface CommandResult {
   readonly stdout: Buffer
@@ -12,14 +13,13 @@ interface CommandResult {
   readonly exitCode: number
 }
 
-const run = async (
-  cwd: string,
-  command: ReadonlyArray<string>,
-  allowFailure = false,
-): Promise<CommandResult> => {
+const run = async (cwd: string, command: ReadonlyArray<string>, allowFailure = false): Promise<CommandResult> => {
   const [executable, ...args] = command
   if (executable === undefined) throw new Error("cannot run an empty command")
-  const child = spawn(executable, args, { cwd, stdio: ["ignore", "pipe", "pipe"] })
+  const child = spawn(executable, args, {
+    cwd,
+    stdio: ["ignore", "pipe", "pipe"],
+  })
   const stdoutChunks: Array<Buffer> = []
   const stderrChunks: Array<Buffer> = []
   child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk))
@@ -44,20 +44,36 @@ const text = async (cwd: string, command: ReadonlyArray<string>, allowFailure = 
   (await run(cwd, command, allowFailure)).stdout.toString("utf8").trim()
 
 const nulPaths = (value: Buffer): ReadonlyArray<string> =>
-  value.toString("utf8").split("\0").filter((path) => path.length > 0).sort()
+  value
+    .toString("utf8")
+    .split("\0")
+    .filter((path) => path.length > 0)
+    .sort()
 
 const hash = (value: string | Buffer): string => createHash("sha256").update(value).digest("hex")
 
 const slug = (value: string): string => {
-  const normalized = value.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "")
+  const normalized = value
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
   return (normalized || "detached").slice(0, 48)
 }
 
 const isRepositoryControl = (path: string): boolean => {
   const name = basename(path).toLowerCase()
-  return name === "agents.md" || name === "claude.md" || name === "opencode.json" || name === "opencode.jsonc" ||
-    path === ".opencode" || path.startsWith(`.opencode${sep}`) || path === ".claude" || path.startsWith(`.claude${sep}`) ||
-    path === ".agents" || path.startsWith(`.agents${sep}`)
+  return (
+    name === "agents.md" ||
+    name === "claude.md" ||
+    name === "opencode.json" ||
+    name === "opencode.jsonc" ||
+    path === ".opencode" ||
+    path.startsWith(`.opencode${sep}`) ||
+    path === ".claude" ||
+    path.startsWith(`.claude${sep}`) ||
+    path === ".agents" ||
+    path.startsWith(`.agents${sep}`)
+  )
 }
 
 const snapshotPath = (snapshotDirectory: string, path: string): string =>
@@ -69,9 +85,42 @@ const isNoise = (path: string): boolean => {
   const lower = path.toLowerCase()
   if (lower.includes("migration")) return false
   const name = basename(lower)
-  return name === "bun.lock" || name === "package-lock.json" || name === "yarn.lock" ||
-    name === "pnpm-lock.yaml" || name === "cargo.lock" || name === "go.sum" ||
-    lower.endsWith(".min.js") || lower.endsWith(".min.css") || lower.endsWith(".bundle.js") || lower.endsWith(".map")
+  return (
+    name === "bun.lock" ||
+    name === "package-lock.json" ||
+    name === "yarn.lock" ||
+    name === "pnpm-lock.yaml" ||
+    name === "cargo.lock" ||
+    name === "go.sum" ||
+    lower.endsWith(".min.js") ||
+    lower.endsWith(".min.css") ||
+    lower.endsWith(".bundle.js") ||
+    lower.endsWith(".map")
+  )
+}
+
+const isRepositoryGuidance = (path: string): boolean => {
+  const lower = path.toLowerCase()
+  return lower.endsWith(".md") || lower.endsWith(".mdx") || lower.endsWith(".rst") || lower.endsWith(".adoc")
+}
+
+const copyRepositoryGuidance = async (root: string, revision: string, contextDirectory: string): Promise<string> => {
+  const paths = nulPaths((await run(root, ["git", "ls-tree", "-r", "-z", "--name-only", revision])).stdout).filter(
+    isRepositoryGuidance,
+  )
+  const guidanceDirectory = join(contextDirectory, "repository-guidance")
+  const files: Array<{ readonly path: string; readonly snapshotPath: string }> = []
+  for (const path of paths) {
+    const destination = join(guidanceDirectory, `${path}.txt`)
+    await mkdir(dirname(destination), { recursive: true, mode: 0o700 })
+    await writeFile(destination, (await run(root, ["git", "show", `${revision}:${path}`])).stdout, { mode: 0o600 })
+    files.push({ path, snapshotPath: destination })
+  }
+  const manifestPath = join(contextDirectory, "repository-guidance.json")
+  await writeFile(manifestPath, JSON.stringify({ revision, files }, null, 2), {
+    mode: 0o600,
+  })
+  return manifestPath
 }
 
 const resolveDefaultBase = async (root: string): Promise<string> => {
@@ -95,7 +144,9 @@ const digestSource = async (root: string, paths: ReadonlyArray<string>): Promise
   const digest = createHash("sha256")
   for (const path of paths) {
     const absolute = join(root, path)
-    const state = await lstat(absolute).catch((cause: NodeJS.ErrnoException) => cause.code === "ENOENT" ? null : Promise.reject(cause))
+    const state = await lstat(absolute).catch((cause: NodeJS.ErrnoException) =>
+      cause.code === "ENOENT" ? null : Promise.reject(cause),
+    )
     if (state === null) {
       digest.update(`deleted\0${path}\0`)
       continue
@@ -112,16 +163,14 @@ const digestSource = async (root: string, paths: ReadonlyArray<string>): Promise
   return digest.digest("hex")
 }
 
-const copySource = async (
-  root: string,
-  snapshotDirectory: string,
-  paths: ReadonlyArray<string>,
-): Promise<string> => {
+const copySource = async (root: string, snapshotDirectory: string, paths: ReadonlyArray<string>): Promise<string> => {
   const digest = createHash("sha256")
   for (const path of paths) {
     const source = join(root, path)
     const destination = snapshotPath(snapshotDirectory, path)
-    const state = await lstat(source).catch((cause: NodeJS.ErrnoException) => cause.code === "ENOENT" ? null : Promise.reject(cause))
+    const state = await lstat(source).catch((cause: NodeJS.ErrnoException) =>
+      cause.code === "ENOENT" ? null : Promise.reject(cause),
+    )
     if (state === null) {
       digest.update(`deleted\0${path}\0`)
       continue
@@ -129,7 +178,9 @@ const copySource = async (
     await mkdir(dirname(destination), { recursive: true, mode: 0o700 })
     if (state.isSymbolicLink()) {
       const target = await readlink(source)
-      await writeFile(`${destination}.symlink.txt`, `Symlink omitted from inert snapshot: ${path} -> ${target}\n`, { mode: 0o600 })
+      await writeFile(`${destination}.symlink.txt`, `Symlink omitted from inert snapshot: ${path} -> ${target}\n`, {
+        mode: 0o600,
+      })
       digest.update(`symlink\0${path}\0${target}\0`)
       continue
     }
@@ -158,20 +209,52 @@ const untrackedPatch = async (root: string, path: string): Promise<string> => {
 const buildPatch = async (
   root: string,
   mergeBase: string,
-): Promise<{ readonly patch: string; readonly changedPaths: ReadonlyArray<string>; readonly skippedPaths: ReadonlyArray<string> }> => {
+): Promise<{
+  readonly patch: string
+  readonly files: ReadonlyArray<ReviewPatchFile>
+  readonly changedPaths: ReadonlyArray<string>
+  readonly skippedPaths: ReadonlyArray<string>
+}> => {
   const tracked = nulPaths((await run(root, ["git", "diff", "--name-only", "-z", mergeBase, "--"])).stdout)
   const untracked = nulPaths((await run(root, ["git", "ls-files", "-z", "--others", "--exclude-standard"])).stdout)
   const allPaths = [...new Set([...tracked, ...untracked])].sort()
   const changedPaths = allPaths.filter((path) => !isNoise(path))
   const skippedPaths = allPaths.filter(isNoise)
   const untrackedSet = new Set(untracked)
-  const patches: Array<string> = []
+  const files: Array<ReviewPatchFile> = []
   for (const path of changedPaths) {
-    patches.push(untrackedSet.has(path)
-      ? await untrackedPatch(root, path)
-      : (await run(root, ["git", "diff", "--find-renames", mergeBase, "--", path])).stdout.toString("utf8"))
+    files.push({
+      path,
+      patch: untrackedSet.has(path)
+        ? await untrackedPatch(root, path)
+        : (await run(root, ["git", "diff", "--find-renames", mergeBase, "--", path])).stdout.toString("utf8"),
+    })
   }
-  return { patch: patches.join("\n"), changedPaths, skippedPaths }
+  return { patch: files.map((file) => file.patch).join("\n"), files, changedPaths, skippedPaths }
+}
+
+const writeReviewUnits = async (
+  contextDirectory: string,
+  files: ReadonlyArray<ReviewPatchFile>,
+): Promise<{ readonly manifestPath: string; readonly units: ReadonlyArray<ReviewUnit> }> => {
+  const directory = join(contextDirectory, "review-units")
+  await mkdir(directory, { recursive: true, mode: 0o700 })
+  const units: Array<ReviewUnit> = []
+  for (const plan of planReviewUnits(files)) {
+    const patchPath = join(directory, `${plan.id}.patch`)
+    await writeFile(patchPath, plan.patch, { mode: 0o600 })
+    units.push({
+      id: plan.id,
+      label: plan.label,
+      paths: plan.paths,
+      patchPath,
+      patchLines: plan.patchLines,
+      patchBytes: plan.patchBytes,
+    })
+  }
+  const manifestPath = join(contextDirectory, "review-units.json")
+  await writeFile(manifestPath, JSON.stringify({ units }, null, 2), { mode: 0o600 })
+  return { manifestPath, units }
 }
 
 const captureOnce = async (
@@ -183,13 +266,18 @@ const captureOnce = async (
   const branchValue = await text(root, ["git", "branch", "--show-current"])
   const head = await text(root, ["git", "rev-parse", "HEAD"])
   const branch = branchValue || `detached-${head.slice(0, 12)}`
-  const baseRef = requestedBase ?? await resolveDefaultBase(root)
+  const baseRef = requestedBase ?? (await resolveDefaultBase(root))
   const baseTip = await text(root, ["git", "rev-parse", `${baseRef}^{commit}`])
   const mergeBase = await text(root, ["git", "merge-base", baseTip, head])
   const remote = await text(root, ["git", "remote", "get-url", "origin"], true)
   const repositoryIdentity = `${remote || root}\0${root}`
   const repositoryId = hash(repositoryIdentity).slice(0, 16)
-  const streamDirectory = join("/tmp/agentic-review", `${slug(basename(root))}-${repositoryId}`, `${slug(branch)}-${hash(branch).slice(0, 12)}`)
+  const streamDirectory = join(
+    await realpath("/tmp"),
+    "agentic-review",
+    `${slug(basename(root))}-${repositoryId}`,
+    `${slug(branch)}-${hash(branch).slice(0, 12)}`,
+  )
   const runDirectory = join(streamDirectory, "runs", runId)
   const directory = join(runDirectory, "worktree")
   await mkdir(directory, { recursive: true, mode: 0o700 })
@@ -203,23 +291,36 @@ const captureOnce = async (
     return null
   }
 
-  const { patch, changedPaths, skippedPaths } = await buildPatch(root, mergeBase)
+  const { patch, files, changedPaths, skippedPaths } = await buildPatch(root, mergeBase)
   const contextDirectory = join(runDirectory, "context")
   await mkdir(contextDirectory, { recursive: true, mode: 0o700 })
   const patchPath = join(contextDirectory, "changes.patch")
   await writeFile(patchPath, patch, { mode: 0o600 })
-  await writeFile(join(contextDirectory, "review-context.json"), JSON.stringify({
-    repositoryRoot: root,
-    branch,
-    baseRef,
-    baseTip,
-    mergeBase,
-    head,
-    effectiveTreeId,
-    changedPaths,
-    skippedPaths,
-    repositoryControlFiles: beforePaths.filter(isRepositoryControl),
-  }, null, 2), { mode: 0o600 })
+  const reviewUnits = await writeReviewUnits(contextDirectory, files)
+  const repositoryGuidanceManifestPath = await copyRepositoryGuidance(root, baseTip, contextDirectory)
+  await writeFile(
+    join(contextDirectory, "review-context.json"),
+    JSON.stringify(
+      {
+        repositoryRoot: root,
+        branch,
+        baseRef,
+        baseTip,
+        mergeBase,
+        head,
+        effectiveTreeId,
+        changedPaths,
+        skippedPaths,
+        reviewUnits: reviewUnits.units,
+        reviewUnitManifestPath: reviewUnits.manifestPath,
+        repositoryControlFiles: beforePaths.filter(isRepositoryControl),
+        repositoryGuidanceManifestPath,
+      },
+      null,
+      2,
+    ),
+    { mode: 0o600 },
+  )
 
   const finalPaths = await sourcePaths(root)
   const finalTreeId = await digestSource(root, finalPaths)
@@ -227,8 +328,13 @@ const captureOnce = async (
   const finalBranchValue = await text(root, ["git", "branch", "--show-current"])
   const finalBranch = finalBranchValue || `detached-${finalHead.slice(0, 12)}`
   const finalBaseTip = await text(root, ["git", "rev-parse", `${baseRef}^{commit}`])
-  if (afterPaths.join("\0") !== finalPaths.join("\0") || effectiveTreeId !== finalTreeId ||
-    head !== finalHead || branch !== finalBranch || baseTip !== finalBaseTip) {
+  if (
+    afterPaths.join("\0") !== finalPaths.join("\0") ||
+    effectiveTreeId !== finalTreeId ||
+    head !== finalHead ||
+    branch !== finalBranch ||
+    baseTip !== finalBaseTip
+  ) {
     await rm(runDirectory, { recursive: true, force: true })
     return null
   }
@@ -245,6 +351,9 @@ const captureOnce = async (
     runtimeDirectory: runDirectory,
     snapshotDirectory: directory,
     patchPath,
+    reviewUnitManifestPath: reviewUnits.manifestPath,
+    reviewUnits: reviewUnits.units,
+    repositoryGuidanceManifestPath,
     changedPaths,
     skippedPaths,
     historyPath: join(streamDirectory, "review.jsonl"),
@@ -277,43 +386,31 @@ export function captureReviewSnapshot(
   })
 }
 
-/** Check whether one reviewed commit remains an ancestor of the current commit. */
-export function isAncestor(root: string, ancestor: string, descendant: string): Effect.Effect<boolean, GitReviewError> {
+/** Remove source and context retained only for the lifetime of one review run. */
+export function removeReviewSnapshot(snapshot: ReviewSnapshot): Effect.Effect<void, GitReviewError> {
   return Effect.tryPromise({
-    try: async () => (await run(root, ["git", "merge-base", "--is-ancestor", ancestor, descendant], true)).exitCode === 0,
-    catch: (cause) => cause instanceof GitReviewError ? cause : new GitReviewError({
-      operation: "check review ancestry",
-      message: String(cause),
-      details: root,
-    }),
+    try: () => rm(snapshot.runDirectory, { recursive: true, force: true }),
+    catch: (cause) =>
+      new GitReviewError({
+        operation: "remove review snapshot",
+        message: String(cause),
+        details: snapshot.runDirectory,
+      }),
   })
 }
 
-/** Build the effective-tree delta used by incremental specialist reviewers. */
-export function writeIncrementalPatch(
-  previousDirectory: string,
-  snapshot: ReviewSnapshot,
-): Effect.Effect<string, GitReviewError> {
+/** Check whether one reviewed commit remains an ancestor of the current commit. */
+export function isAncestor(root: string, ancestor: string, descendant: string): Effect.Effect<boolean, GitReviewError> {
   return Effect.tryPromise({
-    try: async () => {
-      const result = await run(snapshot.repositoryRoot, [
-        "git", "diff", "--no-index", "--no-ext-diff", "--", previousDirectory, snapshot.snapshotDirectory,
-      ], true)
-      if (result.exitCode !== 0 && result.exitCode !== 1) {
-        throw new GitReviewError({
-          operation: "create incremental review patch",
-          message: result.stderr.trim() || `git diff exited with ${result.exitCode}`,
-          details: snapshot.snapshotDirectory,
-        })
-      }
-      const path = join(snapshot.runtimeDirectory, "context", "incremental.patch")
-      await writeFile(path, result.stdout, { mode: 0o600 })
-      return path
-    },
-    catch: (cause) => cause instanceof GitReviewError ? cause : new GitReviewError({
-      operation: "create incremental review patch",
-      message: String(cause),
-      details: snapshot.snapshotDirectory,
-    }),
+    try: async () =>
+      (await run(root, ["git", "merge-base", "--is-ancestor", ancestor, descendant], true)).exitCode === 0,
+    catch: (cause) =>
+      cause instanceof GitReviewError
+        ? cause
+        : new GitReviewError({
+            operation: "check review ancestry",
+            message: String(cause),
+            details: root,
+          }),
   })
 }

@@ -183,7 +183,7 @@ const runScript = Effect.fn("Cli.runScript")(function* (
     source: sourceRef(project),
     watch: options.watch,
   } as const
-  if (options.watch || options.json || options.noTui || !process.stdout.isTTY) {
+  if (options.json || options.noTui || !process.stdout.isTTY) {
     yield* daemonRequest(socket, request)
     const snapshot = yield* withPreparationProgress(
       waitForCommand(socket, project.packagePath, commandId(project.packagePath, script)),
@@ -206,6 +206,7 @@ const runScript = Effect.fn("Cli.runScript")(function* (
         packagePath: project.packagePath,
         script,
         args,
+        watch: options.watch,
       },
     }).pipe(Effect.provide(ApplicationLayer))
   }
@@ -428,6 +429,16 @@ const stopCommand = Command.make("stop", { target: stopTarget, json: jsonOption 
     yield* printSnapshot(snapshot, json, "stop")
   }), json),
 ).pipe(Command.withDescription("Stop a command, or all commands in this repository"))
+
+const shutdownCommand = Command.make("shutdown", { json: jsonOption }, ({ json }) =>
+  safe(Effect.gen(function* () {
+    const project = yield* discover()
+    const { socket } = yield* initializeClient(project)
+    const response = yield* daemonRequest(socket, { type: "shutdown" })
+    if (json) yield* printJson("shutdown", { message: response.message ?? "stopped" })
+    else yield* Console.log("runbox daemon stopped")
+  }), json),
+).pipe(Command.withDescription("Stop the repository daemon after stopping its commands"))
 
 const statusCommand = Command.make("status", { json: jsonOption }, ({ json }) =>
   safe(Effect.gen(function* () {
@@ -1053,6 +1064,7 @@ const app = root.pipe(
     restartCommand,
     doctorCommand,
     stopCommand,
+    shutdownCommand,
     statusCommand,
     switchCommand,
   ]),

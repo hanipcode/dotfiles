@@ -52,15 +52,19 @@ describe("TUI activation", () => {
     expect(initialized.status, initialized.stderr).toBe(0)
     git(root, "worktree", "add", "-b", "feature", feature)
 
-    const result = await new Promise<{
+    const interactive = (...args: ReadonlyArray<string>) => new Promise<{
       readonly status: number | null
       readonly stdout: string
       readonly stderr: string
     }>((resolveRun) => {
       const child = spawn("/usr/bin/expect", ["-c", [
         "set timeout 10",
-        "spawn -noecho bun $env(RUNBOX_TEST_CLI) dev",
-        "after 1000",
+        `spawn -noecho bun $env(RUNBOX_TEST_CLI) ${args.join(" ")}`,
+        "expect {",
+        "  *logs* {}",
+        "  timeout {}",
+        "}",
+        "after 500",
         "catch {send -- q}",
         "expect eof",
       ].join("\n")], {
@@ -80,17 +84,39 @@ describe("TUI activation", () => {
         resolveRun({ status: exitCode, stdout, stderr })
       })
     })
+    const waitForStatus = async (predicate: (stdout: string) => boolean) => {
+      let latest = run(feature, env, "status", "--json")
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        if (latest.status === 0 && predicate(latest.stdout)) return latest
+        await new Promise((resolveRun) => setTimeout(resolveRun, 200))
+        latest = run(feature, env, "status", "--json")
+      }
+      return latest
+    }
+    const result = await interactive("dev")
     const output = `${result.stdout}\n${result.stderr}`
 
     expect(result.status).not.toBeNull()
     expect(output).not.toContain("RUNNER_SOURCE_MISMATCH")
     expect(output).toContain(" logs")
-    const status = run(feature, env, "status", "--json")
+    const status = await waitForStatus((stdout) => JSON.parse(stdout).data.state.source?.branch === "feature")
     expect(status.status, status.stderr).toBe(0)
     expect(JSON.parse(status.stdout).data.state.source).toMatchObject({
       kind: "worktree",
       branch: "feature",
     })
     run(feature, env, "stop", "all", "--json")
-  }, 30_000)
+    run(feature, env, "shutdown", "--json")
+
+    await writeFile(join(feature, "watched.txt"), "watched\n")
+    const watched = await interactive("dev", "-w")
+    const watchedOutput = `${watched.stdout}\n${watched.stderr}`
+    expect(watched.status).not.toBeNull()
+    expect(watchedOutput).toContain(" logs")
+    const watchedStatus = await waitForStatus((stdout) => JSON.parse(stdout).data.state.commands[".:dev"]?.sourceWatch === true)
+    expect(watchedStatus.status, watchedStatus.stderr).toBe(0)
+    expect(JSON.parse(watchedStatus.stdout).data.state.commands[".:dev"]?.sourceWatch).toBe(true)
+    run(feature, env, "stop", "all", "--json")
+    run(feature, env, "shutdown", "--json")
+  }, 60_000)
 })

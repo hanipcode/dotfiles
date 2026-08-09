@@ -128,8 +128,25 @@ describe("source synchronization", () => {
     expect(watchedASnapshot.state.commands[".:dev"]?.sourceWatch).toBe(true)
     expect(watchedASnapshot.sync).toMatchObject({ mode: "watch", sourcePath: physicalRoot })
 
+    const beforeIgnoredEvent = JSON.parse(run(root, env, "status", "--json").stdout).data.sync.lastCompletedAt
+    await mkdir(join(root, "node_modules", "generated"), { recursive: true })
+    await writeFile(join(root, "node_modules", "generated", "cache.txt"), "ignored\n")
+    await sleep(300)
+    const afterIgnoredEvent = JSON.parse(run(root, env, "status", "--json").stdout).data.sync
+    expect(afterIgnoredEvent.lastCompletedAt).toBe(beforeIgnoredEvent)
+    expect(afterIgnoredEvent.pending).toBe(false)
+
+    const initialPackageJson = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as Record<string, unknown>
+    await writeFile(join(root, "package.json"), JSON.stringify({ ...initialPackageJson, private: true }))
+    await waitFor(async () => {
+      const synced = JSON.parse(await readFile(join(state.runnerPath, "package.json"), "utf8")) as Record<string, unknown>
+      return synced.private === true
+    })
+    expect(JSON.parse(run(root, env, "status", "--json").stdout).data.sync.setupChanged).toBe(true)
+
     await writeFile(join(root, "app.txt"), "watched-a-2\n")
     await waitFor(async () => (await readFile(join(state.runnerPath, "app.txt"), "utf8")) === "watched-a-2\n")
+    expect(JSON.parse(run(root, env, "status", "--json").stdout).data.sync.setupChanged).toBe(false)
 
     const branchB = join(home, "branch-b")
     git(root, "worktree", "add", "-b", "branch-b", branchB)
@@ -259,5 +276,6 @@ describe("source synchronization", () => {
     expect(JSON.parse(invalidJournal.stdout)).toMatchObject({ error: { code: "SYNC_JOURNAL_INVALID" } })
     expect(await readFile(join(outside, "protected.txt"), "utf8")).toBe("protected\n")
     run(branchB, env, "stop", "all", "--json")
+    run(branchB, env, "shutdown", "--json")
   }, 90_000)
 })
