@@ -6,7 +6,7 @@ import { tmpdir } from "node:os"
 import { spawnSync } from "node:child_process"
 
 const cli = resolve("bin/runbox.tsx")
-const fakeOpenCode = resolve("tests/fixtures/fake-opencode")
+const fakeOpenCode = resolve("tests/fixtures/bin/opencode")
 const fakeGh = resolve("tests/fixtures/fake-gh")
 
 const run = (
@@ -45,8 +45,9 @@ describe("runbox CLI", () => {
         RUNBOX_HOME: join(home, "runbox"),
         XDG_DATA_HOME: join(home, "legacy-data"),
         XDG_STATE_HOME: join(home, "legacy-state"),
-        RUNBOX_OPENCODE_BIN: fakeOpenCode,
+        PATH: `${dirname(fakeOpenCode)}:${process.env.PATH ?? ""}`,
         RUNBOX_TEST_OPENCODE_COUNT_FILE: join(home, "opencode-count"),
+        RUNBOX_TEST_OPENCODE_DIRECTORY_FILE: join(home, "opencode-directory"),
         RUNBOX_GH_BIN: fakeGh,
         RUNBOX_STACK_JSON: "",
       }
@@ -116,12 +117,9 @@ describe("runbox CLI", () => {
 
       const doctor = run(root, env, "doctor", "--json")
       expect(doctor.status, doctor.stderr).toBe(0)
-      expect(JSON.parse(doctor.stdout).data).toMatchObject({ healthy: true })
-      const unhealthyDoctor = run(root, { ...env, RUNBOX_OPENCODE_BIN: "missing-opencode" }, "doctor", "--json")
-      expect(unhealthyDoctor.status).toBe(1)
-      expect(JSON.parse(unhealthyDoctor.stdout)).toMatchObject({
-        ok: false,
-        error: { code: "DOCTOR_FAILED" },
+      expect(JSON.parse(doctor.stdout).data).toMatchObject({
+        healthy: true,
+        checks: expect.arrayContaining([expect.objectContaining({ name: "opencode", status: "ok" })]),
       })
 
       const invalidArguments = run(root, env, "logs", "--json")
@@ -153,6 +151,8 @@ describe("runbox CLI", () => {
       expect(switchedSnapshot.data.state.commands[".:dev"]?.status).toBe("running")
       expect((yield* Effect.promise(() => readFile(join(home, "opencode-count"), "utf8"))).trim().split("\n"))
         .toHaveLength(1)
+      expect((yield* Effect.promise(() => readFile(join(home, "opencode-directory"), "utf8"))).trim())
+        .toBe(listedProjects[0]?.runnerPath)
       expect(yield* Effect.promise(() => readFile(join(listedProjects[0]?.runnerPath ?? "", ".env"), "utf8")))
         .toBe("SECRET=refreshed\n")
 

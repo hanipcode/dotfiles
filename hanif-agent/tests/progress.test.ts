@@ -13,7 +13,7 @@ describe("review progress", () => {
       type: "snapshot_ready",
       changedPathCount: 258,
       unitCount: 7,
-    })).toBe("[review] 258 changed paths grouped into 7 Luna units")
+    })).toBe("[review] 258 changed paths indexed in 7 navigation units")
   })
 
   it("throttles activity per reviewer without suppressing stage milestones", async () => {
@@ -54,5 +54,8 @@ describe("review progress", () => {
     expect(reviewerToolActivity("webfetch", {
       url: "https://example.test/private?q=secret",
     }, runtime)).toBe("checking external documentation")
+    expect(reviewerToolActivity("command_execution", {
+      command: "cat /tmp/secret",
+    }, runtime)).toBe("inspecting immutable snapshot")
   })
 })

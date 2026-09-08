@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { CommandRecord, isRepositoryPreparation } from "../src/domain.ts"
 import { parseWorktreeList } from "../src/services/RepositoryCatalog.ts"
 
 describe("RepositoryCatalog", () => {
@@ -31,5 +32,23 @@ describe("RepositoryCatalog", () => {
         prunable: "gitdir file points to non-existent location",
       },
     ])
+  })
+
+  it("identifies repository preparation separately from command preparation", () => {
+    const preparing = CommandRecord.make({
+      id: ".:dev",
+      packagePath: "",
+      script: "dev",
+      args: [],
+      status: "preparing",
+      pid: null,
+      startedAt: null,
+      exitCode: null,
+      message: "preparing repository with Luna",
+      logFile: "/logs/dev.log",
+      processToken: "token",
+    })
+    expect(isRepositoryPreparation(preparing)).toBe(true)
+    expect(isRepositoryPreparation(CommandRecord.make({ ...preparing, message: "preparing command" }))).toBe(false)
   })
 })

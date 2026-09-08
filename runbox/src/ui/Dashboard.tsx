@@ -2,7 +2,7 @@ import type { ScrollBoxRenderable } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { CommandRecord, ProcessMetrics, RepoSnapshot } from "../domain.ts"
-import { commandId } from "../domain.ts"
+import { commandId, isRepositoryPreparation } from "../domain.ts"
 import { formatLogOutput } from "../logFormat.ts"
 import { CommandListRow, commandStatusColor } from "./CommandListRow.tsx"
 import { theme } from "./theme.ts"
@@ -228,7 +228,7 @@ export const Dashboard = ({
     const metrics = snapshot.metrics[detailRecord.id]
     const history = histories[detailRecord.id] ?? { cpu: [], memory: [] }
     const graphWidth = Math.max(8, Math.min(narrow ? terminal.width - 22 : 48, 48))
-    const rawOutput = detailRecord.status === "preparing" && detailRecord.message?.includes("repository")
+    const rawOutput = isRepositoryPreparation(detailRecord)
       ? snapshot.logs.setup ?? snapshot.logs[detailRecord.id] ?? ""
       : snapshot.logs[detailRecord.id] ?? ""
     const output = stripAnsi(formatLogOutput(rawOutput))

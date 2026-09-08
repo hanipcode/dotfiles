@@ -1,13 +1,18 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "permission": "allow",
-  "plugin": [
-    "opencode-fungsi-galaksi",
-    "opencode-openai-codex-auth",
-    "opencode-gemini-auth",
-    "opencode-anthropic-auth",
-    "@byfungsi/opencode-sumopod-plugin"
-  ],
+  "permission": {
+    "*": "allow",
+    "edit": {
+      "*": "allow",
+      "*eslint.config.*": "ask",
+      "*.eslintrc*": "ask",
+      "*.eslintignore": "ask",
+      "*biome.json": "ask",
+      "*biome.jsonc": "ask",
+      "*.oxlintrc.json": "ask",
+      "*oxlint.config.*": "ask"
+    }
+  },
   "references": {
     "effect": {
       "repository": "Effect-TS/effect",

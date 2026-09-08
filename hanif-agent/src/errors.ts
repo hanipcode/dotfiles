@@ -29,7 +29,7 @@ export class ReviewHistoryError extends Schema.TaggedError<ReviewHistoryError>()
   },
 ) {}
 
-/** OpenCode or a model failed while executing a reviewer role. */
+/** Codex or a model failed while executing a reviewer role. */
 export class ReviewerExecutionError extends Schema.TaggedError<ReviewerExecutionError>()(
   "ReviewerExecutionError",
   {
@@ -38,6 +38,8 @@ export class ReviewerExecutionError extends Schema.TaggedError<ReviewerExecution
     message: Schema.String,
     retryable: Schema.Boolean,
     sessionId: Schema.NullOr(Schema.String),
+    kind: Schema.Literal("timeout", "process", "provider", "configuration", "protocol").pipe(Schema.optionalWith({ default: () => "process" })),
+    attempts: Schema.Number.pipe(Schema.optionalWith({ default: () => 1 })),
   },
 ) {}
 
@@ -48,6 +50,7 @@ export class ReviewerOutputError extends Schema.TaggedError<ReviewerOutputError>
     role: Schema.String,
     message: Schema.String,
     output: Schema.String,
+    attempts: Schema.Number.pipe(Schema.optionalWith({ default: () => 1 })),
   },
 ) {}
 
@@ -68,6 +71,12 @@ export class ClipboardError extends Schema.TaggedError<ClipboardError>()(
   },
 ) {}
 
+/** A requested review run cannot be inspected or safely reused. */
+export class ReviewRunError extends Schema.TaggedError<ReviewRunError>()("ReviewRunError", {
+  operation: Schema.String,
+  message: Schema.String,
+}) {}
+
 /** Typed failures exposed by the adversarial review operation. */
 export type ReviewError =
   | GitReviewError
@@ -76,6 +85,7 @@ export type ReviewError =
   | ReviewerExecutionError
   | ReviewerOutputError
   | GoalReferenceError
+  | ReviewRunError
 
 /** Render an expected failure at the CLI boundary without exposing credentials. */
 export function reviewErrorMessage(error: unknown): string {

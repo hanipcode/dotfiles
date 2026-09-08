@@ -105,6 +105,8 @@ brew "mpv"
 brew "mysql"
 # Fast, highly customisable system info script
 brew "neofetch"
+# Retrieves currently playing media and controls playback
+brew "nowplaying-cli"
 # Incremental parsing library
 brew "tree-sitter"
 # Ambitious Vim-fork focused on extensibility and agility
@@ -273,7 +275,7 @@ npm "9router"
 npm "agent-browser"
 npm "better-sqlite3"
 npm "corepack"
-npm "opencode-ai"
+npm "@opencode-ai/cli@next"
 npm "pnpm"
 npm "react-doctor"
 npm "sql.js"

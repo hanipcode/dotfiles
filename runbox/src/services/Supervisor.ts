@@ -15,7 +15,8 @@ import type {
   SourceRef,
 } from "../domain.ts"
 import { commandId } from "../domain.ts"
-import { RunboxError, ScriptNotFound } from "../errors.ts"
+import { RunboxError, ScriptNotFound, toErrorInfo, type ErrorInfo } from "../errors.ts"
+import { Readiness } from "./Readiness.ts"
 import { LogStore } from "./LogStore.ts"
 import { Metrics } from "./Metrics.ts"
 import { Paths } from "./Paths.ts"
@@ -126,7 +127,7 @@ export class Supervisor extends Context.Tag("@runbox/Supervisor")<
     readonly failPreparation: (
       id: string,
       token: string,
-      message: string,
+      failure: ErrorInfo,
     ) => Effect.Effect<void, RunboxError>
     readonly awaitExit: (processToken: string) => Effect.Effect<CommandRecord, RunboxError>
     readonly stop: (packagePath: string, script: string) => Effect.Effect<void, RunboxError>
@@ -156,6 +157,7 @@ export class Supervisor extends Context.Tag("@runbox/Supervisor")<
         const paths = yield* Paths
         const shell = yield* Shell
         const sourceSync = yield* SourceSync
+        const readiness = yield* Readiness
         const runtime = yield* Effect.runtime<never>()
         const runFork = Runtime.runFork(runtime)
         const runPromise = Runtime.runPromise(runtime)
@@ -199,12 +201,14 @@ export class Supervisor extends Context.Tag("@runbox/Supervisor")<
             return { ...state, commands: { ...state.commands, [id]: update(current) } }
           })
 
-        const observe = (child: ChildProcess, logFile: string): Promise<number> =>
+        const observe = (child: ChildProcess, logFile: string, onOutput: (chunk: string) => void): Promise<number> =>
           new Promise((resolve) => {
             child.stdout?.setEncoding("utf8").on("data", (chunk: string) => {
+              onOutput(chunk)
               runFork(logs.append(logFile, chunk))
             })
             child.stderr?.setEncoding("utf8").on("data", (chunk: string) => {
+              onOutput(chunk)
               runFork(logs.append(logFile, chunk))
             })
             child.once("error", (cause) => {
@@ -251,16 +255,19 @@ export class Supervisor extends Context.Tag("@runbox/Supervisor")<
                   })
                 }
               }
+              const wasStopped = requestedStops.delete(processToken)
               const next = yield* updateCommandForToken(id, processToken, (record) => ({
                   ...record,
-                  status: requestedStops.delete(processToken)
+                  status: record.failure !== undefined
+                    ? "failed"
+                    : wasStopped
                     ? "completed"
                     : exitCode === 0
                       ? "completed"
                       : "failed",
                   pid: null,
                   exitCode,
-                  message: exitCode === 0 ? null : `exited with code ${exitCode}`,
+                  message: record.failure?.message ?? (exitCode === 0 ? null : `exited with code ${exitCode}`),
                 }))
               const current = next.commands[id]
               if (current !== undefined && current.processToken === processToken) {
@@ -338,14 +345,15 @@ export class Supervisor extends Context.Tag("@runbox/Supervisor")<
         const failPreparation = Effect.fn("Supervisor.failPreparation")(function* (
           id: string,
           token: string,
-          message: string,
+          failure: ErrorInfo,
         ) {
           yield* updateCommandForToken(id, token, (record) => ({
             ...record,
             status: "failed",
             pid: null,
             exitCode: -1,
-            message,
+            message: failure.message,
+            failure,
           }))
         })
 
@@ -400,6 +408,7 @@ export class Supervisor extends Context.Tag("@runbox/Supervisor")<
             ),
           )
           const argv = projects.command(info, script, args)
+          const readinessCheck = yield* readiness.load(runnerProject.packageJsonPath, script)
           const [executable, ...commandArgs] = argv
           if (executable === undefined) {
             return yield* new RunboxError({ operation: "start command", message: "empty command" })
@@ -425,7 +434,14 @@ export class Supervisor extends Context.Tag("@runbox/Supervisor")<
           if (child.pid === undefined) {
             return yield* new RunboxError({ operation: "spawn command", message: "process has no pid" })
           }
-          const exit = observe(child, logFile)
+          let readinessLog = ""
+          let logReady = false
+          const exit = observe(child, logFile, (chunk) => {
+            if (readinessCheck?.type !== "log" || logReady) return
+            const combined = readinessLog + chunk
+            logReady = combined.includes(readinessCheck.text)
+            readinessLog = combined.slice(-64 * 1024)
+          })
           const settled = yield* Deferred.make<CommandRecord>()
           exits.set(processToken, settled)
           children.set(id, { token: processToken, child })
@@ -442,6 +458,7 @@ export class Supervisor extends Context.Tag("@runbox/Supervisor")<
             logFile,
             processToken,
             sourceWatch: existing.sourceWatch,
+            readiness: readinessCheck === null ? "not-configured" : "waiting",
           }
           yield* persist((current) => ({
             ...current,
@@ -454,6 +471,24 @@ export class Supervisor extends Context.Tag("@runbox/Supervisor")<
           const current = after.commands[id]
           if (current?.status === "starting" && current.processToken === processToken) {
             yield* updateCommandForToken(id, processToken, (value) => ({ ...value, status: "running" }))
+          }
+          if (readinessCheck !== null) {
+            yield* Effect.raceFirst(
+              readiness.wait(readinessCheck, () => logReady && readinessCheck.type === "log" ? readinessCheck.text : readinessLog),
+              Deferred.await(settled).pipe(Effect.flatMap(() => new RunboxError({
+                operation: "wait for command readiness",
+                message: "Command exited before becoming ready",
+                code: "READINESS_COMMAND_EXITED",
+                suggestion: "Inspect the command log before restarting.",
+                details: logFile,
+              }))),
+            ).pipe(Effect.tapError((error) => Effect.gen(function* () {
+              yield* updateCommandForToken(id, processToken, (record) => ({ ...record, failure: toErrorInfo(error), readiness: "failed" }))
+              yield* stop(packagePath, script)
+              yield* failPreparation(id, processToken, toErrorInfo(error))
+              yield* updateCommandForToken(id, processToken, (record) => ({ ...record, readiness: "failed" }))
+            })))
+            yield* updateCommandForToken(id, processToken, (record) => ({ ...record, readiness: "ready" }))
           }
           return (yield* Ref.get(stateRef)).commands[id] ?? record
         })

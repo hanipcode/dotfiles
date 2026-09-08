@@ -1,0 +1,54 @@
+#!/usr/bin/env bun
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs"
+
+if (process.argv.includes("--help")) {
+  console.log("--ephemeral --ignore-user-config --ignore-rules --skip-git-repo-check --sandbox --json --model")
+  process.exit(0)
+}
+const prompt = await Bun.stdin.text()
+const role = /Act only as the ([\w-]+) specialist/.exec(prompt)?.[1] ??
+  (prompt.includes("Reconcile the independent Astra review") ? "astra-reconcile" : "astra-independent")
+const log = process.env.FAKE_CODEX_LOG
+if (log) appendFileSync(log, JSON.stringify({ role, event: "started", pid: process.pid, prompt, args: process.argv }) + "\n")
+const attempt = log ? readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line))
+  .filter((entry) => entry.role === role && entry.event === "started").length : 1
+console.log(JSON.stringify({ type: "thread.started", thread_id: `thread-${role}` }))
+console.log(JSON.stringify({ type: "item.completed", item: { type: "command_execution", command: "secret command" } }))
+if (process.env.FAKE_CODEX_MODE === "astra-failure" && role === "astra-independent") {
+  console.log(JSON.stringify({ type: "turn.failed", error: { message: "Astra unavailable" } }))
+  process.exit(1)
+}
+if (role === "standards-modules") {
+  if (process.env.FAKE_CODEX_MODE === "timeout") await new Promise(() => { setInterval(() => {}, 1_000) })
+  if (process.env.FAKE_CODEX_MODE === "failure") {
+    console.log(JSON.stringify({ type: "turn.failed", error: { message: "provider unavailable API_TOKEN=test-secret Bearer test-bearer" } }))
+    process.exit(1)
+  }
+  if (process.env.FAKE_CODEX_MODE === "nested-retry" && (attempt === 1 || attempt === 3)) {
+    console.log(JSON.stringify({ type: "turn.failed", error: { message: "Transient provider failure" } }))
+    process.exit(1)
+  }
+}
+if (process.env.FAKE_CODEX_BARRIER && role !== "astra-reconcile") {
+  writeFileSync(`${process.env.FAKE_CODEX_BARRIER}-${role}`, "started")
+  const roles = ["security", "standards-contracts", "standards-modules", "quality", "astra-independent"]
+  const deadline = Date.now() + 5_000
+  while (!roles.every((name) => existsSync(`${process.env.FAKE_CODEX_BARRIER}-${name}`))) {
+    if (Date.now() > deadline) process.exit(9)
+    await Bun.sleep(10)
+  }
+}
+const paths = JSON.parse(/(?:Assigned|Changed) paths, all of which must appear in reviewedPaths:\n(\[[\s\S]*?\])/.exec(prompt)?.[1] ?? "[]")
+const output = { summary: "fixture review", reviewedPaths: paths, seamNotes: [], findings: [] }
+if (process.env.FAKE_CODEX_MODE === "independent-finding" && role === "astra-independent") {
+  output.findings.push({ id: null, status: "new", category: "quality", severity: "warning",
+    title: "Independent finding marker", impact: "Changed caller loses its result", evidence: "Verified caller in app.ts",
+    rule: null, location: { path: "app.ts", line: 1, symbol: "value" }, sources: ["astra-independent"] })
+}
+if (role === "standards-modules" && (process.env.FAKE_CODEX_MODE === "malformed" ||
+    (process.env.FAKE_CODEX_MODE === "nested-retry" && attempt === 2))) {
+  output.reviewedPaths = []
+}
+console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: JSON.stringify(output) } }))
+console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 100, cached_input_tokens: 25 } }))
+if (log) appendFileSync(log, JSON.stringify({ role, event: "finished" }) + "\n")

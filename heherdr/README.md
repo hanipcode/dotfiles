@@ -14,6 +14,8 @@ One binary, one subcommand per plugin:
 heherdr worktree            # run the overlay directly (this is also how you dev)
 heherdr open worktree       # ask herdr to open it as a pane (what a keybinding fires)
 heherdr worktree-from       # open the new-worktree dialog with base selection
+heherdr run                 # open a terminal in the current worktree
+heherdr run-worktree        # select a worktree, then open a terminal
 ```
 
 One herdr plugin id (`heherdr`) with many entrypoints, so adding a plugin means a
@@ -32,6 +34,7 @@ src/framework/
   ui/runApp.tsx             renderer lifecycle, Kitty keyboard, alt screen
   ui/theme.ts               Catppuccin Macchiato
 src/plugins/
+  run/                      floating terminal with optional worktree selection
   worktree/                 project-wise worktree management
 ```
 
@@ -124,6 +127,11 @@ command = "heherdr.worktree"
 The worktree overlay opens the same dialog with `n`. The dedicated "New worktree
 from" action is bound to `prefix+shift+b`; it lets you choose a local or remote
 branch as the base before entering the new branch name.
+
+The floating terminal is bound to `prefix+l` for the current worktree.
+`prefix+shift+l` opens a worktree selector first; type to filter or move with `j/k`,
+then press Enter. Both open a full-width, 45%-height popup. Press `ctrl+q` to close
+it; the runner installs that binding only in its Zsh.
 
 This *replaces* herdr's native `open_worktree` overlay (`open_worktree = ""`), and
 pushes `open_notification_target` from its `prefix+o` default to `prefix+shift+o`.

@@ -92,6 +92,41 @@ sync_claude_skill_links() {
   done
 }
 
+sync_home_skill_links() {
+  local agents_dir="$HOME/.agents/skills"
+  local claude_dir="$HOME/.claude/skills"
+  local skill_source skill link target
+
+  mkdir -p "$agents_dir" "$claude_dir"
+
+  for skill_source in "$SKILLS_DIR"/*; do
+    [ -f "$skill_source/SKILL.md" ] || continue
+    skill="${skill_source##*/}"
+
+    link="$agents_dir/$skill"
+    target="../../.dotfiles/home/.agents/skills/$skill"
+    if [ -L "$link" ] && [ "$link/SKILL.md" -ef "$skill_source/SKILL.md" ]; then
+      :
+    elif [ -e "$link" ] || [ -L "$link" ]; then
+      warn "~/.agents/skills/$skill already exists; leaving it unchanged"
+    else
+      ln -s "$target" "$link"
+      ok "linked ~/.agents/skills/$skill -> canonical skill"
+    fi
+
+    link="$claude_dir/$skill"
+    target="../../.dotfiles/home/.claude/skills/$skill"
+    if [ -L "$link" ] && [ "$link/SKILL.md" -ef "$skill_source/SKILL.md" ]; then
+      :
+    elif [ -e "$link" ] || [ -L "$link" ]; then
+      warn "~/.claude/skills/$skill already exists; leaving it unchanged"
+    else
+      ln -s "$target" "$link"
+      ok "linked ~/.claude/skills/$skill -> canonical skill"
+    fi
+  done
+}
+
 cmd_stow() {
   need stow || exit 1
   need git || exit 1
@@ -132,6 +167,16 @@ cmd_skills() {
     enable)
       shift
       cmd_skill_enable "$@"
+      return
+      ;;
+    reload)
+      shift
+      if [ "$#" -ne 0 ]; then
+        bad "usage: dot skills reload"
+        return 1
+      fi
+      sync_claude_skill_links
+      sync_home_skill_links
       return
       ;;
   esac
@@ -309,13 +354,19 @@ cmd_tools() {
       ok "linked $tool"
     fi
   done
+  if [ -f "$DOTFILES/hshot/Package.swift" ]; then
+    need swift || return 1
+    swift build --package-path "$DOTFILES/hshot" -c release >/dev/null
+    chmod go-w "$DOTFILES/hshot/.build/release/hshot"
+    ok "built hshot"
+  fi
 }
 
 cmd_doctor() {
   local fail=0
 
   head_ "Tools"
-  for t in stow brew git nvim herdr bun fzf opencode runbox hanif-agent; do
+  for t in stow brew git nvim herdr bun fzf opencode runbox hanif-agent hshot; do
     if command -v "$t" >/dev/null 2>&1; then ok "$t"; else bad "$t missing"; fail=1; fi
   done
 
@@ -424,7 +475,7 @@ ${BOLD}COMMANDS${RESET}
     dump        Regenerate packages/Brewfile from this machine
     plugins     Relink herdr plugins and reload herdr config
     tools       Install and link personal CLI tools
-    skills ...  Manage skills; supports enable/disable plus the upstream CLI
+    skills ...  Manage skills; supports enable/disable/reload plus the upstream CLI
     update      Pull, stow, brew, plugins
     doctor      Check tools, symlinks, and that no secrets or state got tracked
 

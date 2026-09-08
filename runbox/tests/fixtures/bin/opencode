@@ -1,0 +1,66 @@
+#!/usr/bin/env bun
+import { appendFile } from "node:fs/promises"
+
+const portArgument = process.argv.find((argument) => argument.startsWith("--port="))
+const port = Number(portArgument?.slice("--port=".length) ?? 4096)
+const delay = Number(process.env.RUNBOX_TEST_OPENCODE_DELAY ?? 0) * 1_000
+const countFile = process.env.RUNBOX_TEST_OPENCODE_COUNT_FILE
+const directoryFile = process.env.RUNBOX_TEST_OPENCODE_DIRECTORY_FILE
+
+const response = (value: unknown): Response => Response.json(value)
+
+const server = Bun.serve({
+  hostname: "127.0.0.1",
+  port,
+  async fetch(request) {
+    const url = new URL(request.url)
+    if (request.method === "POST" && url.pathname === "/session") {
+      if (countFile !== undefined) await appendFile(countFile, "run\n")
+      const directory = decodeURIComponent(request.headers.get("x-opencode-directory") ?? "")
+      if (directoryFile !== undefined) await appendFile(directoryFile, `${directory}\n`)
+      return response({
+        id: "session",
+        projectID: "project",
+        directory,
+        title: "Runbox preparation",
+        version: "1.18.16",
+        time: { created: Date.now(), updated: Date.now() },
+      })
+    }
+    if (request.method === "POST" && url.pathname === "/session/session/message") {
+      if (delay > 0) await Bun.sleep(delay)
+      const text = JSON.stringify({ summary: "prepared", instructionChanges: [] })
+      return response({
+        info: {
+          id: "message",
+          sessionID: "session",
+          role: "assistant",
+          time: { created: Date.now(), completed: Date.now() },
+          parentID: "parent",
+          modelID: "gpt-5.6-luna",
+          providerID: "openai",
+          mode: "build",
+          path: { cwd: process.cwd(), root: process.cwd() },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        },
+        parts: [{ id: "part", sessionID: "session", messageID: "message", type: "text", text }],
+      })
+    }
+    if (request.method === "GET" && url.pathname === "/event") {
+      return new Response(new ReadableStream({ start() {} }), {
+        headers: { "content-type": "text/event-stream" },
+      })
+    }
+    if (request.method === "POST" && url.pathname === "/session/session/abort") return response(true)
+    return new Response("Not found", { status: 404 })
+  },
+})
+
+console.log(`opencode server listening on ${server.url}`)
+
+const stop = () => {
+  void server.stop(true).then(() => process.exit(0))
+}
+process.on("SIGTERM", stop)
+process.on("SIGINT", stop)

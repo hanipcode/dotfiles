@@ -14,6 +14,7 @@ import { RepositoryCatalog } from "../services/RepositoryCatalog.ts"
 import { StateStore } from "../services/StateStore.ts"
 import { StorageMigration } from "../services/StorageMigration.ts"
 import { Shell } from "../services/Shell.ts"
+import { OpenCode } from "../services/OpenCode.ts"
 
 const activeStatuses = new Set(["preparing", "starting", "running", "stopping"])
 
@@ -29,7 +30,11 @@ export class RunboxApplication extends Context.Tag("@runbox/RunboxApplication")<
       RunboxError | InvalidState | DirtyWorktree | ScriptNotFound,
       Git | Paths | StateStore | StorageMigration
     >
-    readonly commit: (request: CommitRequest) => Effect.Effect<ActionPlan, RunboxError | InvalidState | ScriptNotFound, Shell>
+    readonly commit: (request: CommitRequest) => Effect.Effect<
+      ActionPlan,
+      RunboxError | InvalidState | ScriptNotFound,
+      Shell | OpenCode
+    >
   }
 >() {
   static readonly layer = Layer.effect(

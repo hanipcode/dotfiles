@@ -140,6 +140,29 @@ const resolveDefaultBase = async (root: string): Promise<string> => {
 const sourcePaths = async (root: string): Promise<ReadonlyArray<string>> =>
   nulPaths((await run(root, ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"])).stdout)
 
+interface RevisionSourceEntry {
+  readonly mode: string
+  readonly object: string
+  readonly path: string
+}
+
+const revisionSourceEntries = async (root: string, revision: string): Promise<ReadonlyArray<RevisionSourceEntry>> => {
+  const entries: Array<RevisionSourceEntry> = []
+  for (const entry of (await run(root, ["git", "ls-tree", "-r", "-z", revision])).stdout.toString("utf8").split("\0")) {
+    if (entry.length === 0) continue
+    const match = /^(\d+) (\w+) ([0-9a-f]+)\t([\s\S]+)$/.exec(entry)
+    if (match?.[1] === undefined || match[2] === undefined || match[3] === undefined || match[4] === undefined) {
+      throw new GitReviewError({
+        operation: `read source tree for ${revision}`,
+        message: "git ls-tree returned an unsupported entry",
+        details: entry,
+      })
+    }
+    if (match[2] === "blob") entries.push({ mode: match[1], object: match[3], path: match[4] })
+  }
+  return entries
+}
+
 const digestSource = async (root: string, paths: ReadonlyArray<string>): Promise<string> => {
   const digest = createHash("sha256")
   for (const path of paths) {
@@ -194,6 +217,32 @@ const copySource = async (root: string, snapshotDirectory: string, paths: Readon
   return digest.digest("hex")
 }
 
+const copyRevisionSource = async (
+  root: string,
+  revision: string,
+  snapshotDirectory: string,
+): Promise<{ readonly effectiveTreeId: string; readonly paths: ReadonlyArray<string> }> => {
+  const entries = await revisionSourceEntries(root, revision)
+  for (const entry of entries) {
+    const destination = snapshotPath(snapshotDirectory, entry.path)
+    await mkdir(dirname(destination), { recursive: true, mode: 0o700 })
+    const content = (await run(root, ["git", "cat-file", "blob", entry.object])).stdout
+    if (entry.mode === "120000") {
+      await writeFile(
+        `${destination}.symlink.txt`,
+        `Symlink omitted from inert snapshot: ${entry.path} -> ${content.toString("utf8")}\n`,
+        { mode: 0o600 },
+      )
+      continue
+    }
+    await writeFile(destination, content, { mode: entry.mode === "100755" ? 0o700 : 0o600 })
+  }
+  return {
+    effectiveTreeId: await text(root, ["git", "rev-parse", `${revision}^{tree}`]),
+    paths: entries.map((entry) => entry.path),
+  }
+}
+
 const untrackedPatch = async (root: string, path: string): Promise<string> => {
   const result = await run(root, ["git", "diff", "--no-index", "--no-ext-diff", "--", "/dev/null", path], true)
   if (result.exitCode !== 0 && result.exitCode !== 1) {
@@ -209,14 +258,20 @@ const untrackedPatch = async (root: string, path: string): Promise<string> => {
 const buildPatch = async (
   root: string,
   mergeBase: string,
+  targetRef?: string,
 ): Promise<{
   readonly patch: string
   readonly files: ReadonlyArray<ReviewPatchFile>
   readonly changedPaths: ReadonlyArray<string>
   readonly skippedPaths: ReadonlyArray<string>
 }> => {
-  const tracked = nulPaths((await run(root, ["git", "diff", "--name-only", "-z", mergeBase, "--"])).stdout)
-  const untracked = nulPaths((await run(root, ["git", "ls-files", "-z", "--others", "--exclude-standard"])).stdout)
+  const targetArguments = targetRef === undefined ? [] : [targetRef]
+  const tracked = nulPaths(
+    (await run(root, ["git", "diff", "--name-only", "-z", mergeBase, ...targetArguments, "--"])).stdout,
+  )
+  const untracked = targetRef === undefined
+    ? nulPaths((await run(root, ["git", "ls-files", "-z", "--others", "--exclude-standard"])).stdout)
+    : []
   const allPaths = [...new Set([...tracked, ...untracked])].sort()
   const changedPaths = allPaths.filter((path) => !isNoise(path))
   const skippedPaths = allPaths.filter(isNoise)
@@ -227,7 +282,7 @@ const buildPatch = async (
       path,
       patch: untrackedSet.has(path)
         ? await untrackedPatch(root, path)
-        : (await run(root, ["git", "diff", "--find-renames", mergeBase, "--", path])).stdout.toString("utf8"),
+        : (await run(root, ["git", "diff", "--find-renames", mergeBase, ...targetArguments, "--", path])).stdout.toString("utf8"),
     })
   }
   return { patch: files.map((file) => file.patch).join("\n"), files, changedPaths, skippedPaths }
@@ -257,15 +312,45 @@ const writeReviewUnits = async (
   return { manifestPath, units }
 }
 
+const writeCallDiff = async (
+  root: string,
+  mergeBase: string,
+  changedPaths: ReadonlyArray<string>,
+  contextDirectory: string,
+  targetRef?: string,
+): Promise<string> => {
+  const outputPath = join(contextDirectory, "call-diff.json")
+  try {
+    const { runDiff } = await import("calldiff/dist/run.js")
+    const result = runDiff({
+      cwd: root,
+      from: mergeBase,
+      ...(targetRef === undefined ? {} : { to: targetRef }),
+      paths: [...changedPaths],
+      maxDepth: 8,
+      color: false,
+    })
+    await writeFile(outputPath, JSON.stringify({ status: "available", result }, null, 2), { mode: 0o600 })
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : String(cause)
+    await writeFile(outputPath, JSON.stringify({ status: "unavailable", message }, null, 2), { mode: 0o600 })
+  }
+  return outputPath
+}
+
 const captureOnce = async (
   cwd: string,
   requestedBase: string | undefined,
   runId: string,
+  targetRef: string | undefined,
 ): Promise<ReviewSnapshot | null> => {
   const root = resolve(await text(cwd, ["git", "rev-parse", "--show-toplevel"]))
   const branchValue = await text(root, ["git", "branch", "--show-current"])
-  const head = await text(root, ["git", "rev-parse", "HEAD"])
-  const branch = branchValue || `detached-${head.slice(0, 12)}`
+  const checkoutHead = await text(root, ["git", "rev-parse", "HEAD"])
+  const head = targetRef === undefined
+    ? checkoutHead
+    : await text(root, ["git", "rev-parse", `${targetRef}^{commit}`])
+  const branch = branchValue || `detached-${checkoutHead.slice(0, 12)}`
   const baseRef = requestedBase ?? (await resolveDefaultBase(root))
   const baseTip = await text(root, ["git", "rev-parse", `${baseRef}^{commit}`])
   const mergeBase = await text(root, ["git", "merge-base", baseTip, head])
@@ -282,20 +367,29 @@ const captureOnce = async (
   const directory = join(runDirectory, "worktree")
   await mkdir(directory, { recursive: true, mode: 0o700 })
 
-  const beforePaths = await sourcePaths(root)
-  const effectiveTreeId = await copySource(root, directory, beforePaths)
-  const afterPaths = await sourcePaths(root)
-  const afterTreeId = await digestSource(root, afterPaths)
-  if (beforePaths.join("\0") !== afterPaths.join("\0") || effectiveTreeId !== afterTreeId) {
+  const beforePaths = targetRef === undefined ? await sourcePaths(root) : []
+  const revisionSource = targetRef === undefined ? null : await copyRevisionSource(root, head, directory)
+  const effectiveTreeId = revisionSource === null
+    ? await copySource(root, directory, beforePaths)
+    : revisionSource.effectiveTreeId
+  const snapshotPaths = revisionSource?.paths ?? beforePaths
+  const afterPaths = targetRef === undefined ? await sourcePaths(root) : snapshotPaths
+  const afterTreeId = targetRef === undefined ? await digestSource(root, afterPaths) : effectiveTreeId
+  if (
+    targetRef === undefined &&
+    (beforePaths.join("\0") !== afterPaths.join("\0") || effectiveTreeId !== afterTreeId)
+  ) {
     await rm(runDirectory, { recursive: true, force: true })
     return null
   }
 
-  const { patch, files, changedPaths, skippedPaths } = await buildPatch(root, mergeBase)
+  const targetCommit = targetRef === undefined ? undefined : head
+  const { patch, files, changedPaths, skippedPaths } = await buildPatch(root, mergeBase, targetCommit)
   const contextDirectory = join(runDirectory, "context")
   await mkdir(contextDirectory, { recursive: true, mode: 0o700 })
   const patchPath = join(contextDirectory, "changes.patch")
   await writeFile(patchPath, patch, { mode: 0o600 })
+  const callDiffPath = await writeCallDiff(root, mergeBase, changedPaths, contextDirectory, targetCommit)
   const reviewUnits = await writeReviewUnits(contextDirectory, files)
   const repositoryGuidanceManifestPath = await copyRepositoryGuidance(root, baseTip, contextDirectory)
   await writeFile(
@@ -311,9 +405,10 @@ const captureOnce = async (
         effectiveTreeId,
         changedPaths,
         skippedPaths,
+        callDiffPath,
         reviewUnits: reviewUnits.units,
         reviewUnitManifestPath: reviewUnits.manifestPath,
-        repositoryControlFiles: beforePaths.filter(isRepositoryControl),
+        repositoryControlFiles: snapshotPaths.filter(isRepositoryControl),
         repositoryGuidanceManifestPath,
       },
       null,
@@ -322,16 +417,22 @@ const captureOnce = async (
     { mode: 0o600 },
   )
 
-  const finalPaths = await sourcePaths(root)
-  const finalTreeId = await digestSource(root, finalPaths)
+  const finalPaths = targetRef === undefined ? await sourcePaths(root) : snapshotPaths
+  const finalTreeId = targetRef === undefined
+    ? await digestSource(root, finalPaths)
+    : await text(root, ["git", "rev-parse", `${targetRef}^{tree}`])
   const finalHead = await text(root, ["git", "rev-parse", "HEAD"])
+  const finalTarget = targetRef === undefined
+    ? finalHead
+    : await text(root, ["git", "rev-parse", `${targetRef}^{commit}`])
   const finalBranchValue = await text(root, ["git", "branch", "--show-current"])
   const finalBranch = finalBranchValue || `detached-${finalHead.slice(0, 12)}`
   const finalBaseTip = await text(root, ["git", "rev-parse", `${baseRef}^{commit}`])
   if (
     afterPaths.join("\0") !== finalPaths.join("\0") ||
     effectiveTreeId !== finalTreeId ||
-    head !== finalHead ||
+    checkoutHead !== finalHead ||
+    head !== finalTarget ||
     branch !== finalBranch ||
     baseTip !== finalBaseTip
   ) {
@@ -351,6 +452,7 @@ const captureOnce = async (
     runtimeDirectory: runDirectory,
     snapshotDirectory: directory,
     patchPath,
+    callDiffPath,
     reviewUnitManifestPath: reviewUnits.manifestPath,
     reviewUnits: reviewUnits.units,
     repositoryGuidanceManifestPath,
@@ -361,16 +463,17 @@ const captureOnce = async (
   }
 }
 
-/** Capture a stable, inert copy of the current branch and effective worktree. */
+/** Capture a stable, inert copy of an effective worktree or committed target revision. */
 export function captureReviewSnapshot(
   cwd: string,
   baseRef: string | undefined,
   runId: string,
+  targetRef?: string,
 ): Effect.Effect<ReviewSnapshot, GitReviewError | UnstableSnapshotError> {
   return Effect.tryPromise({
     try: async () => {
       for (let attempt = 1; attempt <= 2; attempt += 1) {
-        const snapshot = await captureOnce(cwd, baseRef, runId)
+        const snapshot = await captureOnce(cwd, baseRef, runId, targetRef)
         if (snapshot !== null) return snapshot
       }
       throw new UnstableSnapshotError({ root: cwd, attempts: 2 })

@@ -784,8 +784,10 @@ export const GlobalDashboard = ({ initial, initialIntent, onInspect, onPlan, onC
         <text wrapMode="none" truncate style={{ fg: theme.subtext0 }}>{`storage ${selectedRepository?.storage ?? "-"}  daemon ${selectedRepository?.daemon ?? "-"}  setup ${view.selected?.preparation.setup ?? "-"}`}</text>
         {selectedRecord === null ? (
           <text wrapMode="none" truncate style={{ fg: theme.overlay1 }}>{selectedRow?.script?.command ?? "no retained command status"}</text>
+        ) : view.selected?.selectedMetrics === null || view.selected?.selectedMetrics === undefined ? (
+          <text wrapMode="none" truncate style={{ fg: commandStatusColor(selectedRecord.status) }}>{`${selectedRecord.status}  pid ${selectedRecord.pid ?? "-"}  cpu -  memory -  processes -  uptime -`}</text>
         ) : (
-          <text wrapMode="none" truncate style={{ fg: commandStatusColor(selectedRecord.status) }}>{`${selectedRecord.status}  pid ${selectedRecord.pid ?? "-"}  cpu ${view.selected?.selectedMetrics?.cpuPercent.toFixed(1) ?? "0.0"}%  memory ${bytes(view.selected?.selectedMetrics?.memoryBytes ?? 0)}  processes ${view.selected?.selectedMetrics?.processCount ?? 0}  uptime ${duration(view.selected?.selectedMetrics?.uptimeSeconds ?? 0)}`}</text>
+          <text wrapMode="none" truncate style={{ fg: commandStatusColor(selectedRecord.status) }}>{`${selectedRecord.status}  pid ${selectedRecord.pid ?? "-"}  cpu ${view.selected.selectedMetrics.cpuPercent.toFixed(1)}%  memory ${bytes(view.selected.selectedMetrics.memoryBytes)}  processes ${view.selected.selectedMetrics.processCount}  uptime ${duration(view.selected.selectedMetrics.uptimeSeconds)}`}</text>
         )}
       </box>
     </PaneFrame>
@@ -794,6 +796,8 @@ export const GlobalDashboard = ({ initial, initialIntent, onInspect, onPlan, onC
   const logPane = (
     <PaneFrame shortcut="o" label="logs" focused={focus === "detail"}>
       <scrollbox id="global-dashboard-logs" focused={focus === "detail"} stickyScroll stickyStart="bottom" scrollY verticalScrollbarOptions={verticalScrollbarOptions} style={{ minHeight: 1, flexGrow: 1 }}>
+        {selectedRecord?.readiness === undefined ? null : <text style={{ fg: theme.subtext0 }}>{`readiness: ${selectedRecord.readiness}`}</text>}
+        {selectedRecord?.failure === undefined ? null : <text wrapMode="char" style={{ fg: theme.red }}>{`${selectedRecord.failure.code}: ${selectedRecord.failure.message}\n${selectedRecord.failure.suggestion}`}</text>}
         <text wrapMode="char" style={{ fg: theme.text }}>{formatLogOutput(view.selected?.selectedLog ?? "") || selectedRecord?.message || selectedRow?.script?.command || "enter a command to inspect its logs"}</text>
       </scrollbox>
       {(view.selected?.problems ?? []).map((entry) => <text key={`${entry.code}:${entry.path}`} wrapMode="none" truncate style={{ height: 1, flexShrink: 0, fg: theme.red }}>{`${entry.code}: ${entry.message}`}</text>)}

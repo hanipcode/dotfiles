@@ -1,7 +1,7 @@
 import { Schema } from "effect"
 import { createHash } from "node:crypto"
 
-export const RUNBOX_PROTOCOL_VERSION = 2
+export const RUNBOX_PROTOCOL_VERSION = 3
 
 export const CommandStatus = Schema.Literal(
   "preparing",
@@ -58,6 +58,16 @@ export const ProcessMetrics = Schema.Struct({
 })
 export type ProcessMetrics = typeof ProcessMetrics.Type
 
+/** Stable failure information survives daemon persistence and background startup. */
+export const ErrorInfoSchema = Schema.Struct({
+  code: Schema.String,
+  message: Schema.String,
+  operation: Schema.String,
+  suggestion: Schema.String,
+  retryable: Schema.Boolean,
+  details: Schema.NullOr(Schema.String),
+})
+
 export const CommandRecord = Schema.Struct({
   id: Schema.String,
   packagePath: Schema.String,
@@ -68,6 +78,8 @@ export const CommandRecord = Schema.Struct({
   startedAt: Schema.NullOr(Schema.Number),
   exitCode: Schema.NullOr(Schema.Number),
   message: Schema.NullOr(Schema.String),
+  failure: Schema.optional(ErrorInfoSchema),
+  readiness: Schema.optional(Schema.Literal("not-configured", "waiting", "ready", "failed")),
   logFile: Schema.String,
   processToken: Schema.NullOr(Schema.String).pipe(
     Schema.optionalWith({ default: () => null }),
@@ -75,6 +87,10 @@ export const CommandRecord = Schema.Struct({
   sourceWatch: Schema.optional(Schema.Boolean),
 })
 export type CommandRecord = typeof CommandRecord.Type
+
+/** Identifies the preparation phase whose output is written to the repository setup log. */
+export const isRepositoryPreparation = (record: CommandRecord): boolean =>
+  record.status === "preparing" && record.message?.includes("repository") === true
 
 export const RepoState = Schema.Struct({
   version: Schema.Literal(2),
@@ -94,8 +110,13 @@ export const RepoState = Schema.Struct({
 })
 export type RepoState = typeof RepoState.Type
 
+/** State revisions compare values, not property insertion order after schema decoding. */
 export const stateRevision = (state: RepoState): string =>
-  createHash("sha256").update(JSON.stringify(state)).digest("hex").slice(0, 16)
+  createHash("sha256").update(JSON.stringify(state, (_key, value: unknown) =>
+    typeof value === "object" && value !== null && !Array.isArray(value)
+      ? Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)))
+      : value
+  )).digest("hex").slice(0, 16)
 
 export const repositoryRoot = (state: RepoState): string =>
   state.environmentSourceRoot ?? state.repoRoot
@@ -279,15 +300,6 @@ export const DaemonRequestSchema = Schema.Union(
   Schema.Struct({ type: Schema.Literal("sync"), packagePath: Schema.String, source: SourceRef }),
   Schema.Struct({ type: Schema.Literal("shutdown") }),
 )
-
-export const ErrorInfoSchema = Schema.Struct({
-  code: Schema.String,
-  message: Schema.String,
-  operation: Schema.String,
-  suggestion: Schema.String,
-  retryable: Schema.Boolean,
-  details: Schema.NullOr(Schema.String),
-})
 
 export const DaemonResponseSchema = Schema.Union(
   Schema.Struct({

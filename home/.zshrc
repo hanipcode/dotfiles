@@ -160,6 +160,7 @@ export PHP_INI_SCAN_DIR="/Users/hanifmuhammad/.config/herd-lite/bin:$PHP_INI_SCA
 
 # opencode
 export PATH=/Users/hanifmuhammad/.opencode/bin:$PATH
+alias opencode=opencode2
 
 eval "$(starship init zsh)"
 

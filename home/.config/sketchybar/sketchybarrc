@@ -42,6 +42,8 @@ sketchybar --default \
 # ---- Items -------------------------------------------------------------------
 source "$ITEM_DIR/spaces.sh"     # left:  aerospace workspaces
 source "$ITEM_DIR/programs.sh"   # left:  dock-style running-apps menu
+source "$ITEM_DIR/media.sh"      # left:  now playing + full YouTube Music popup
+source "$ITEM_DIR/mermaid.sh"    # left:  standalone Mermaid diagram viewer
 # Deprecated in favour of herdr's own Agent panel + system notifications.
 # The chips were tmux-coupled (liveness via `tmux list-panes`, click-jump via
 # tmux window index), so they cannot work under herdr. Scripts kept on disk

@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest"
 import { chmod, mkdtemp, readFile, readdir, realpath, writeFile } from "node:fs/promises"
 import { spawnSync } from "node:child_process"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
+import { dirname, join, resolve } from "node:path"
 
 const cli = resolve("bin/runbox.tsx")
-const fakeOpenCode = resolve("tests/fixtures/fake-opencode")
+const fakeOpenCode = resolve("tests/fixtures/bin/opencode")
 
 const run = (
   cwd: string,
@@ -49,7 +49,7 @@ describe("runbox forward", () => {
       RUNBOX_HOME: join(home, "runbox"),
       XDG_DATA_HOME: join(home, "legacy-data"),
       XDG_STATE_HOME: join(home, "legacy-state"),
-      RUNBOX_OPENCODE_BIN: fakeOpenCode,
+      PATH: `${dirname(fakeOpenCode)}:${process.env.PATH ?? ""}`,
       RUNBOX_STARTUP_GRACE_MS: "0",
       RUNBOX_STABILIZATION_MS: "0",
     }
@@ -140,6 +140,14 @@ describe("runbox forward", () => {
         details: expect.stringContaining('"started":false'),
       },
     })
+
+    const noisy = run(root, env, "forward", "--no-tui", "--json", "node", "-e",
+      "process.stdout.write('x'.repeat(8 * 1024 * 1024)); process.stdout.write('\\nNOISY_COMMAND_COMPLETED\\n')")
+    expect(noisy.status, noisy.stderr).toBe(0)
+    expect(JSON.parse(noisy.stdout)).toMatchObject({ ok: true, data: { exitCode: 0, stdout: expect.stringContaining("NOISY_COMMAND_COMPLETED") } })
+    const noisyLog = run(root, env, "logs", "forward", "--json")
+    expect(noisyLog.status, noisyLog.stderr).toBe(0)
+    expect(JSON.parse(noisyLog.stdout).data.log).toContain("NOISY_COMMAND_COMPLETED")
 
     run(root, env, "stop", "all", "--json")
     run(root, env, "shutdown", "--json")

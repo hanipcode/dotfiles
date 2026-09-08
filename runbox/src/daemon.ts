@@ -18,6 +18,7 @@ import { CoreLayer } from "./layers.ts"
 import { Supervisor } from "./services/Supervisor.ts"
 import { Workflow } from "./services/Workflow.ts"
 import { SourceSync } from "./services/SourceSync.ts"
+import { createForwardOutput } from "./forwardOutput.ts"
 import {
   encodeFrame,
   MAX_FORWARD_FRAME_BYTES,
@@ -228,11 +229,12 @@ export const runDaemon = (
           }
           const terminal = (parsed.type === "stop" && parsed.script === "all") || parsed.type === "shutdown"
           if (terminal) shuttingDown = true
+          const forwardOutput = parsed.type === "forward" ? createForwardOutput(socket) : null
           const observer = parsed.type === "forward"
             ? {
                 onStart: (data: ForwardStart) => {
                   try {
-                    if (!socket.write(encodeFrame({ type: "start", data }, MAX_RESPONSE_FRAME_BYTES))) socket.destroy()
+                    forwardOutput?.write(encodeFrame({ type: "start", data }, MAX_RESPONSE_FRAME_BYTES))
                   } catch {
                     socket.destroy()
                   }
@@ -240,10 +242,7 @@ export const runDaemon = (
                 onOutput: (stream: "stdout" | "stderr", text: string) => {
                   try {
                     for (const part of splitUtf8(text, MAX_FORWARD_FRAME_BYTES - 256)) {
-                      if (!socket.write(encodeFrame({ type: "output", stream, text: part }, MAX_FORWARD_FRAME_BYTES))) {
-                        socket.destroy()
-                        return
-                      }
+                      forwardOutput?.write(encodeFrame({ type: "output", stream, text: part }, MAX_FORWARD_FRAME_BYTES))
                     }
                   } catch {
                     socket.destroy()
@@ -265,7 +264,16 @@ export const runDaemon = (
             requestFibers.delete(fiber)
             if (exit._tag === "Success") {
               try {
-                socket.end(encodeFrame(exit.value, MAX_RESPONSE_FRAME_BYTES))
+                const dropped = forwardOutput?.droppedBytes() ?? 0
+                const response = exit.value.ok && exit.value.forward !== undefined && dropped > 0
+                  ? { ...exit.value, forward: { ...exit.value.forward, warnings: [
+                    ...exit.value.forward.warnings,
+                    { code: "FORWARD_LIVE_OUTPUT_TRUNCATED", message: `Slow reader omitted ${dropped} bytes of live output frames; inspect the retained forward log.` },
+                  ] } }
+                  : exit.value
+                const frame = encodeFrame(response, MAX_RESPONSE_FRAME_BYTES)
+                if (forwardOutput === null) socket.end(frame)
+                else forwardOutput.end(frame)
               } catch (cause) {
                 socket.end(encodeFrame({
                   ok: false,
@@ -280,7 +288,9 @@ export const runDaemon = (
             }
             else {
               const failure = exit.cause._tag === "Fail" ? exit.cause.error : exit.cause
-              socket.end(encodeFrame({ ok: false, error: toErrorInfo(failure) }, MAX_RESPONSE_FRAME_BYTES))
+              const frame = encodeFrame({ ok: false, error: toErrorInfo(failure) }, MAX_RESPONSE_FRAME_BYTES)
+              if (forwardOutput === null) socket.end(frame)
+              else forwardOutput.end(frame)
             }
             if (terminal && !cleanupStarted) {
               cleanupStarted = true

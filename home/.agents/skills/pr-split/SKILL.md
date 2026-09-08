@@ -2,6 +2,8 @@
 name: pr-split
 description: Split a large working branch into multiple small, atomic, reviewable pull requests using git worktrees. Use when the user asks to split a PR or branch into reviewable changes.
 disable-model-invocation: true
+metadata:
+  opencode/autoinvoke: false
 ---
 
 # PR Split Skill

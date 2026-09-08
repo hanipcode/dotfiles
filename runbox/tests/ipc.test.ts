@@ -8,6 +8,28 @@ import { request, requestForward } from "../src/ipc.ts"
 import { encodeFrame, MAX_RESPONSE_FRAME_BYTES, splitUtf8 } from "../src/ipcProtocol.ts"
 
 describe("IPC", () => {
+  it("bounds unterminated forward frames before decoding", async () => {
+    const root = await mkdtemp(join(tmpdir(), "runbox-forward-frame-"))
+    const socketPath = join(root, "daemon.sock")
+    const sockets: Array<Socket> = []
+    const server = createServer((socket) => {
+      sockets.push(socket)
+      socket.on("error", () => {})
+      socket.once("data", () => socket.write("x".repeat(MAX_RESPONSE_FRAME_BYTES + 1)))
+    })
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve))
+    try {
+      const result = await Effect.runPromise(Effect.either(requestForward(socketPath, {
+        type: "forward", packagePath: "", argv: ["echo"],
+        source: { kind: "worktree", worktreePath: "/source", branch: "main", commit: "abc", stack: null },
+      }, { onStart: () => {}, onOutput: () => {} }).pipe(Effect.timeout("10 seconds"))))
+      expect(result).toMatchObject({ _tag: "Left", left: { code: "INVALID_RESPONSE", retryable: false } })
+    } finally {
+      for (const socket of sockets) socket.destroy()
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 15_000)
   it("keeps UTF-8 output frames bounded without splitting characters", () => {
     const text = "a".repeat(100) + "🙂".repeat(100)
     const parts = splitUtf8(text, 64)

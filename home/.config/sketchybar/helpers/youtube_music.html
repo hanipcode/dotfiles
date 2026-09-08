@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Hanif Music</title>
+  <style>
+    :root{color-scheme:dark;--base:#24273a;--mantle:#1e2030;--crust:#181926;--surface:#363a4f;--surface2:#494d64;--overlay:#6e738d;--text:#cad3f5;--sub:#a5adcb;--red:#ed8796;--mauve:#c6a0f6;--blue:#8aadf4;--peach:#f5a97f}
+    *{box-sizing:border-box}html,body{height:100%}body{margin:0;overflow:hidden;background:var(--crust);color:var(--text);font:13px -apple-system,BlinkMacSystemFont,"SF Pro Display",sans-serif}button,input{font:inherit}button{color:inherit}
+    .app{height:100vh;display:grid;grid-template-columns:176px minmax(0,1fr);grid-template-rows:minmax(0,1fr) 76px;background:var(--crust)}
+    aside{padding:50px 14px 18px;background:linear-gradient(180deg,#1e2030f5,#181926f5);border-right:1px solid #494d6466;display:flex;flex-direction:column}.brand{display:flex;align-items:center;gap:10px;padding:0 10px 27px;font-size:18px;font-weight:800;letter-spacing:-.03em}.logo{width:29px;height:29px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(145deg,var(--red),var(--mauve));color:var(--crust);font-size:11px;box-shadow:0 8px 24px #ed879644}
+    nav{display:grid;gap:5px}.nav{width:100%;padding:11px 12px;border:0;border-radius:10px;background:transparent;text-align:left;display:flex;align-items:center;gap:11px;color:var(--sub);cursor:pointer;transition:.15s}.nav:hover{background:#363a4f88;color:var(--text)}.nav.active{background:var(--surface);color:var(--text);box-shadow:inset 0 0 0 1px #ffffff08}.nav-icon{width:18px;text-align:center;font-size:15px}.session{margin-top:auto;padding:13px 11px;border:1px solid #494d6477;border-radius:11px;background:#24273a77}.session strong{display:flex;align-items:center;gap:7px;font-size:11px}.dot{width:7px;height:7px;border-radius:50%;background:#a6da95;box-shadow:0 0 9px #a6da95}.session span{display:block;margin-top:6px;color:var(--overlay);font-size:10px;line-height:1.45}
+    main{min-width:0;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--surface2) transparent;padding:18px 25px 34px}header{position:sticky;top:-18px;z-index:10;padding:0 0 13px;background:linear-gradient(180deg,var(--crust) 72%,transparent);display:flex;align-items:center;justify-content:space-between;gap:18px}.view-context{min-width:120px}.view-context b{display:block;font-size:15px;letter-spacing:-.02em}.view-context span{display:block;margin-top:2px;color:var(--overlay);font-size:10px}.searchbox{height:38px;display:flex;align-items:center;gap:9px;width:min(430px,72%);padding:0 13px;background:#303348e8;border:1px solid var(--surface2);border-radius:11px;transition:.15s}.searchbox:focus-within{border-color:var(--mauve);box-shadow:0 0 0 3px #c6a0f620}.searchbox input{min-width:0;flex:1;border:0;outline:0;background:transparent;color:var(--text);font-size:13px}.searchbox input::placeholder{color:var(--sub)}
+    .spotlight{height:184px;margin:0 0 25px;border-radius:16px;overflow:hidden;position:relative;background:linear-gradient(120deg,#4b304e,#282b43);box-shadow:0 14px 38px #0004}.spotlight-bg{position:absolute;inset:0;background-size:cover;background-position:center 35%;filter:saturate(.85);opacity:.44;transform:scale(1.03)}.spotlight::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,#181926 3%,#181926e8 30%,#18192633 78%,#18192688)}.spotlight-copy{position:absolute;z-index:2;left:26px;bottom:22px;width:58%}.kicker{color:var(--peach);font-size:10px;font-weight:850;letter-spacing:.16em;text-transform:uppercase}.spotlight h1{font-size:28px;line-height:1.02;letter-spacing:-.045em;margin:7px 0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.spotlight p{margin:0 0 14px;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.hero-play{height:34px;padding:0 16px;border:0;border-radius:17px;background:var(--text);color:var(--crust);font-weight:750;cursor:pointer;box-shadow:0 7px 18px #0006}.hero-play:hover{background:white;transform:translateY(-1px)}
+    .page-title{margin:5px 0 25px}.page-title .kicker{color:var(--mauve)}.page-title h1{margin:6px 0 3px;font-size:29px;letter-spacing:-.04em}.page-title p{margin:0;color:var(--sub)}
+    section{margin-bottom:29px}.section-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px}.section-head h2{margin:0;font-size:19px;letter-spacing:-.025em}.section-head span{color:var(--overlay);font-size:10px;text-transform:uppercase;letter-spacing:.1em}.rail{display:flex;gap:14px;overflow-x:auto;padding:0 1px 8px;scrollbar-width:none}.rail::-webkit-scrollbar{display:none}.result-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:20px 14px}.card{flex:0 0 148px;min-width:0;cursor:pointer}.cover{position:relative;aspect-ratio:1;border-radius:13px;overflow:hidden;background:linear-gradient(145deg,var(--surface),var(--mantle));box-shadow:0 10px 25px #0004}.cover img{width:100%;height:100%;object-fit:cover;display:block;transition:.25s transform,.25s filter}.card:hover img{transform:scale(1.045);filter:brightness(.77)}.card-action{position:absolute;right:9px;bottom:9px;width:37px;height:37px;border:0;border-radius:50%;background:var(--red);color:var(--crust);font-size:13px;cursor:pointer;opacity:0;transform:translateY(7px);transition:.18s;box-shadow:0 7px 20px #0009}.card:hover .card-action{opacity:1;transform:none}.card-title{margin:9px 2px 3px;font-weight:720;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.card-sub{margin:0 2px;color:var(--sub);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .empty{height:310px;display:grid;place-items:center;text-align:center;color:var(--sub);line-height:1.6}.loader{width:31px;height:31px;margin:0 auto 13px;border:3px solid var(--surface);border-top-color:var(--mauve);border-radius:50%;animation:spin .75s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+    footer{grid-column:1/-1;position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:22px;padding:10px 20px;background:#181926fa;border-top:1px solid var(--surface);box-shadow:0 -12px 40px #0003}.now{display:flex;align-items:center;gap:11px;min-width:0}.now-art{width:52px;height:52px;flex:0 0 52px;border-radius:9px;display:grid;place-items:center;background:linear-gradient(145deg,var(--surface),#2b2e42);background-size:cover;background-position:center;color:var(--overlay);font-size:20px;box-shadow:0 7px 18px #0004}.now-copy{min-width:0}.now-copy b,.now-copy span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.now-copy b{font-size:13px}.now-copy span{margin-top:3px;color:var(--sub);font-size:11px}.controls{display:flex;align-items:center;gap:8px}.control{border:0;background:transparent;width:32px;height:32px;border-radius:50%;cursor:pointer;font-size:14px}.control:hover{background:var(--surface)}.control.primary{width:40px;height:40px;background:var(--text);color:var(--crust);font-size:13px;box-shadow:0 6px 16px #0005}.control.primary:hover{background:white;transform:scale(1.03)}.player-status{text-align:right}.player-status b{display:block;font-size:10px;letter-spacing:.13em;color:var(--mauve)}.player-status span{display:block;color:var(--overlay);font-size:10px;margin-top:4px}
+    @media(max-width:720px){.app{grid-template-columns:72px 1fr}aside{padding-inline:9px}.brand{padding-inline:7px}.brand-text,.nav span,.session{display:none}.nav{justify-content:center}.spotlight-copy{width:76%}}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside>
+      <div class="brand"><span class="logo">▶</span><span class="brand-text">Hanif Music</span></div>
+      <nav>
+        <button class="nav active" data-page="home" onclick="goHome()"><span class="nav-icon">⌂</span><span>Home</span></button>
+        <button class="nav" data-page="search" onclick="focusSearch()"><span class="nav-icon">⌕</span><span>Search</span></button>
+        <button class="nav" data-page="library" onclick="openLibrary()"><span class="nav-icon">▱</span><span>Library</span></button>
+      </nav>
+      <div class="session"><strong><i class="dot"></i>Chrome session</strong><span>Your recommendations and library are connected locally.</span></div>
+    </aside>
+    <main>
+      <header><div class="view-context"><b id="viewLabel">Home</b><span id="viewHint">Made for Hanif</span></div><label class="searchbox"><span>⌕</span><input id="search" type="search" autocomplete="off" placeholder="Search music"></label></header>
+      <div id="intro"><div class="page-title"><span class="kicker">YouTube Music</span><h1>Listen now</h1><p>Your music, distilled into one small place.</p></div></div>
+      <div id="content"></div>
+    </main>
+    <footer>
+      <div class="now"><div class="now-art" id="nowArt">♪</div><div class="now-copy"><b id="nowTitle">Nothing playing</b><span id="nowSub">Pick something you love</span></div></div>
+      <div class="controls"><button class="control" onclick="playPrevious()">⏮</button><button class="control primary" id="playButton" onclick="togglePlayback()">▶</button><button class="control" onclick="playNext()">⏭</button></div>
+      <div class="player-status"><b id="status">READY</b><span>HANIF MUSIC</span></div>
+    </footer>
+  </div>
+  <script>
+    const bridge=window.webkit.messageHandlers.bridge;let currentItems=[],queue=[],queueIndex=-1,playing=false,searchTimer;
+    const esc=s=>String(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+    function send(action,extra={}){bridge.postMessage({action,...extra})}
+    function setNav(page){document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x.dataset.page===page));const labels={home:['Home','Made for Hanif'],search:['Search','Find anything'],library:['Library','Your saved music']};const next=labels[page]||labels.home;viewLabel.textContent=next[0];viewHint.textContent=next[1]}
+    function goHome(){search.value='';setNav('home');send('home')}
+    function focusSearch(){setNav('search');search.focus()}
+    function openLibrary(){search.value='';setNav('library');send('library')}
+    search.addEventListener('input',()=>{setNav('search');clearTimeout(searchTimer);searchTimer=setTimeout(()=>send('search',{query:search.value.trim()}),320)});
+    function showLoading(text){intro.innerHTML='<div class="page-title"><span class="kicker">YouTube Music</span><h1>One moment</h1><p>'+esc(text)+'</p></div>';content.innerHTML='<div class="empty"><div><div class="loader"></div>'+esc(text)+'</div></div>'}
+    function spotlight(item,index){return `<div class="spotlight"><div class="spotlight-bg" style="background-image:url('${esc(item.thumbnail)}')"></div><div class="spotlight-copy"><span class="kicker">Picked for you</span><h1>${esc(item.title)}</h1><p>${esc(item.subtitle)}</p><button class="hero-play" onclick="openItem(${index})">▶ &nbsp; Play now</button></div></div>`}
+    function renderItems(items,mode){
+      currentItems=items;const names={search:'Search results',collection:'Collection',library:'Your library',home:'Listen now'};const descriptions={search:'Songs, artists, albums and playlists from YouTube Music.',collection:'Keep exploring this collection.',library:'Saved music from your connected account.',home:'Made personal from your listening history.'};
+      if(!items.length){intro.innerHTML=`<div class="page-title"><span class="kicker">YouTube Music</span><h1>${names[mode]||'Listen now'}</h1><p>No results were returned.</p></div>`;content.innerHTML='<div class="empty">Nothing showed up here.<br>Try a different search.</div>';return}
+      const firstSong=items.find(x=>x.kind==='song');const firstIndex=firstSong?items.indexOf(firstSong):-1;
+      intro.innerHTML=(mode==='home'&&firstSong)?spotlight(firstSong,firstIndex):`<div class="page-title"><span class="kicker">YouTube Music</span><h1>${names[mode]||'Discover'}</h1><p>${descriptions[mode]||descriptions.home}</p></div>`;
+      const groups={};items.forEach((x,i)=>{if(mode==='home'&&i===firstIndex)return;(groups[x.section||'Discover']??=[]).push(x)});
+      const layout=mode==='home'?'rail':'result-grid';content.innerHTML=Object.entries(groups).map(([name,list])=>`<section><div class="section-head"><h2>${esc(name)}</h2></div><div class="${layout}">${list.map(x=>{const i=items.indexOf(x);return `<article class="card" onclick="openItem(${i})"><div class="cover">${x.thumbnail?`<img src="${esc(x.thumbnail)}">`:''}<button class="card-action">${x.kind==='song'?'▶':'→'}</button></div><div class="card-title">${esc(x.title)}</div><div class="card-sub">${esc(x.subtitle)}</div></article>`}).join('')}</div></section>`).join('')
+    }
+    function openItem(i){const item=currentItems[i];if(item.kind==='collection'){send('browse',{browseId:item.browseId});return}queue=currentItems.filter(x=>x.kind==='song');queueIndex=queue.findIndex(x=>x.id===item.id);playItem(item)}
+    function playItem(item){nowTitle.textContent=item.title;nowSub.textContent=item.subtitle;nowArt.textContent='';nowArt.style.backgroundImage=item.thumbnail?`url('${item.thumbnail}')`:'';status.textContent='LOADING';send('play',{id:item.id,title:item.title,subtitle:item.subtitle,thumbnail:item.thumbnail})}
+    function togglePlayback(){send('toggle')}
+    function nativePlaybackState(state){playing=state==='PLAYING';playButton.textContent=playing?'Ⅱ':'▶';status.textContent=state}
+    function nativePlaybackEnded(){nativePlaybackState('ENDED');playNext()}
+    function playNext(){if(!queue.length)return;queueIndex=(queueIndex+1)%queue.length;playItem(queue[queueIndex])}
+    function playPrevious(){if(!queue.length)return;queueIndex=(queueIndex-1+queue.length)%queue.length;playItem(queue[queueIndex])}
+    window.addEventListener('DOMContentLoaded',()=>send('ready'));
+  </script>
+</body>
+</html>

@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import type { CommandRecord } from "./domain.ts"
 
 export class RunboxError extends Schema.TaggedError<RunboxError>()(
   "RunboxError",
@@ -20,6 +21,17 @@ export interface ErrorInfo {
   readonly retryable: boolean
   readonly details: string | null
 }
+
+/** Restore the original startup failure; older command records use a generic fallback. */
+export const commandFailureError = (record: CommandRecord): RunboxError =>
+  new RunboxError(record.failure ?? {
+    operation: `start ${record.script}`,
+    message: record.message ?? "Command failed during startup",
+    code: "COMMAND_FAILED",
+    suggestion: "Inspect the retained command log and retry after correcting the startup failure.",
+    retryable: true,
+    details: record.logFile,
+  })
 
 const runboxErrorInfo = (error: RunboxError): ErrorInfo => {
   if (error.code !== "RUNBOX_ERROR") {

@@ -25,8 +25,8 @@ describe("review history", () => {
             promptVersion: "1",
             standardsDigest: "standards",
             models: {
-              reviewer: "openai/gpt-5.6-luna",
-              coordinator: "openai/gpt-5.6-sol",
+              reviewer: "openai/gpt-5.6-luna#high",
+              coordinator: "openai/gpt-5.6-sol#high",
             },
             mode: "full",
             complete: true,

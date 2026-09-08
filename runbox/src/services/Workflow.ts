@@ -3,7 +3,7 @@ import { access } from "node:fs/promises"
 import { join } from "node:path"
 import { randomUUID } from "node:crypto"
 import { commandId, sameSource, type CommandRecord, type ProjectContext, type RepoState, type SourceRef, type SyncResult } from "../domain.ts"
-import { RunboxError, toErrorInfo } from "../errors.ts"
+import { commandFailureError, RunboxError, toErrorInfo } from "../errors.ts"
 import { Agent } from "./Agent.ts"
 import { Git } from "./Git.ts"
 import { LogStore } from "./LogStore.ts"
@@ -103,17 +103,18 @@ export class Workflow extends Context.Tag("@runbox/Workflow")<
         const prepareCommit = Effect.fn("Workflow.prepareCommit")(function* (
           source: SourceRef,
           packagePath: string,
+          force = false,
         ) {
           const state = yield* supervisor.state
           yield* git.syncEnvironment(state)
-          if (state.preparedCommits.includes(source.commit)) return
+          if (!force && state.preparedCommits.includes(source.commit)) return
           const fingerprint = yield* git.setupFingerprint(state, source.commit)
-          if (yield* memory.hasSuccess(state, fingerprint, packagePath, null)) {
+          if (!force && (yield* memory.hasSuccess(state, fingerprint, packagePath, null))) {
             yield* supervisor.markPrepared(source.commit)
             return
           }
           const previous = state.preparedCommits.at(-1)
-          if (previous !== undefined && !(yield* git.setupChanged(state, previous, source.commit))) {
+          if (!force && previous !== undefined && !(yield* git.setupChanged(state, previous, source.commit))) {
             yield* recordReuse(state, fingerprint, packagePath, null, `reused setup from ${previous}`)
             yield* supervisor.markPrepared(source.commit)
             return
@@ -220,7 +221,7 @@ export class Workflow extends Context.Tag("@runbox/Workflow")<
             for (let attempt = 0; attempt < 4; attempt += 1) {
               const record = yield* supervisor.start(packagePath, script, args, token).pipe(
                 Effect.mapError((error) =>
-                  new RunboxError({ operation: `start ${script}`, message: error.message }),
+                  error instanceof RunboxError ? error : new RunboxError(toErrorInfo(error)),
                 ),
               )
               if (record.processToken === null) {
@@ -256,7 +257,7 @@ export class Workflow extends Context.Tag("@runbox/Workflow")<
           yield* lifecycle.pipe(
             Effect.catchAll((error) => {
               const info = toErrorInfo(error)
-              return supervisor.failPreparation(id, token, info.message).pipe(Effect.catchAll(() => Effect.void))
+              return supervisor.failPreparation(id, token, info).pipe(Effect.catchAll(() => Effect.void))
             }),
           )
         })
@@ -323,12 +324,10 @@ export class Workflow extends Context.Tag("@runbox/Workflow")<
           while (Date.now() < deadline) {
             const record = (yield* supervisor.state).commands[id]
             if (record === undefined) return
-            if (record.status === "running" || record.status === "completed") return
-            if (record.status === "failed") {
-              return yield* new RunboxError({
-                operation: `start ${record.script}`,
-                message: record.message ?? "command failed during startup",
-              })
+            if (record.readiness === "failed" && !jobs.has(id)) return yield* commandFailureError(record)
+            if ((record.status === "running" || record.status === "completed") && record.readiness !== "waiting" && record.readiness !== "failed") return
+            if (record.status === "failed" && !jobs.has(id)) {
+              return yield* commandFailureError(record)
             }
             yield* Effect.sleep(100)
           }
@@ -548,23 +547,49 @@ export class Workflow extends Context.Tag("@runbox/Workflow")<
         })
 
         const switchToInternal = Effect.fn("Workflow.switchToInternal")(function* (source: SourceRef) {
-          const active = yield* stopAll()
           const state = yield* supervisor.state
-          yield* git.checkout(state, source)
-          yield* supervisor.setSource(source)
-          yield* git.updateSubmodules(state)
-          yield* prepareCommit(source, active[0]?.packagePath ?? project.packagePath)
-          for (const record of active) {
-            const queued = yield* schedule(source, record.packagePath, record.script, record.args, record.sourceWatch)
-            yield* waitUntilStarted(queued.id)
-          }
+          const active = Object.values(state.commands).filter((record) => activeStatuses.has(record.status))
           const watched = active.find((record) => record.sourceWatch)
-          if (watched !== undefined && source.kind === "worktree") {
-            const result = yield* sourceSync.reconcile(source)
-            if (result.setupChanged) yield* supervisor.invalidatePreparation(source.commit)
-            yield* watchSource(source, watched.packagePath)
-            yield* startWatchGuard()
-          }
+          const restoreCommands = (target: SourceRef, recovering: boolean) => Effect.gen(function* () {
+            yield* git.checkout(state, target)
+            yield* supervisor.setSource(target)
+            yield* git.updateSubmodules(state)
+            if (watched !== undefined && target.kind === "worktree") {
+              const result = yield* sourceSync.reconcile(target)
+              if (result.setupChanged) yield* supervisor.invalidatePreparation(target.commit)
+            }
+            // A failed setup can have changed ignored dependencies; cached success is not proof they still work.
+            yield* prepareCommit(target, active[0]?.packagePath ?? project.packagePath, recovering)
+            for (const record of active) {
+              const queued = yield* schedule(target, record.packagePath, record.script, record.args, record.sourceWatch)
+              yield* waitUntilStarted(queued.id)
+            }
+            if (watched !== undefined && target.kind === "worktree") {
+              yield* watchSource(target, watched.packagePath)
+              yield* startWatchGuard()
+            }
+          })
+          yield* Effect.uninterruptible(Effect.gen(function* () {
+            yield* stopAll()
+            yield* restoreCommands(source, false)
+          }).pipe(Effect.catchAll((activationError) => Effect.gen(function* () {
+            const previous = state.source
+            const rollback = yield* Effect.gen(function* () {
+              yield* stopAll()
+              if (previous !== null) yield* restoreCommands(previous, true)
+            }).pipe(Effect.either)
+            if (rollback._tag === "Left") {
+              yield* stopAll().pipe(Effect.catchAll(() => Effect.succeed([])))
+              return yield* new RunboxError({
+                operation: "rollback source switch",
+                message: "Source switch failed and the previous commands could not be restored",
+                code: "SWITCH_ROLLBACK_FAILED",
+                suggestion: "Inspect 'runbox logs sync --json' and setup logs, repair the source, then switch again.",
+                details: JSON.stringify({ activationError: toErrorInfo(activationError), rollbackError: toErrorInfo(rollback.left) }),
+              })
+            }
+            return yield* activationError
+          })), Effect.tapError(syncFailure)))
         })
 
         const switchTo = Effect.fn("Workflow.switchTo")(function* (source: SourceRef) {

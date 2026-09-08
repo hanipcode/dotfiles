@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto"
 import { spawn } from "node:child_process"
 import { ReviewModels, type ReviewerResponse, type ReviewProgressEvent } from "../src/review/domain.ts"
 import { captureReviewSnapshot, removeReviewSnapshot } from "../src/review/git-snapshot.ts"
-import { OpenCodeRuntime } from "../src/review/opencode-runtime.ts"
+import { CodexRuntime } from "../src/review/codex-runtime.ts"
 import { goalReferenceFromBranch } from "../src/review/prompts.ts"
 import { Review } from "../src/review/review.ts"
 
@@ -51,13 +51,23 @@ const repository = async (): Promise<string> => {
   return root
 }
 
-const coordinatorJson = JSON.stringify({ summary: "clean", findings: [] })
-
 const assignedPaths = (prompt: string): ReadonlyArray<string> => {
   const match = /Assigned paths, all of which must appear in reviewedPaths:\n(\[[\s\S]*?\])\n\nCheck/.exec(prompt)
   if (match?.[1] === undefined) throw new Error("Luna prompt has no assigned path list")
   return JSON.parse(match[1]) as ReadonlyArray<string>
 }
+
+const astraPaths = (prompt: string): ReadonlyArray<string> => {
+  const match = /Changed paths, all of which must appear in reviewedPaths:\n(\[[\s\S]*?\])\n\nReview metadata/.exec(prompt)
+  if (match?.[1] === undefined) throw new Error("Astra prompt has no changed path list")
+  return JSON.parse(match[1]) as ReadonlyArray<string>
+}
+
+const coordinatorJson = (prompt: string): string => JSON.stringify({
+  summary: "clean",
+  reviewedPaths: astraPaths(prompt),
+  findings: [],
+})
 
 const lunaJson = (prompt: string, includeDirectFinding = false): string => JSON.stringify({
   summary: includeDirectFinding ? "Playbook violation marker" : "unit checked",
@@ -69,6 +79,17 @@ const lunaJson = (prompt: string, includeDirectFinding = false): string => JSON.
   }],
   findings: includeDirectFinding
     ? [
+        {
+          id: null,
+          status: "new",
+          category: "standards",
+          severity: "suggestion",
+          title: "Custom Decision duplicates Effect Result",
+          impact: "Callers must learn and maintain an unnecessary local result abstraction.",
+          evidence: "Decision, succeed, fail, and fromDecision duplicate Effect Result and Effect.fromResult.",
+          rule: "coding-standards/SKILL.md: deletion test",
+          location: { path: "app.ts", line: 1, symbol: "Decision" },
+        },
         {
           id: "invented-id",
           status: "resolved",
@@ -122,6 +143,10 @@ describe("adversarial review", () => {
             expect(snapshot.reviewUnits).toHaveLength(1)
             expect(snapshot.reviewUnits[0]?.paths).toEqual(snapshot.changedPaths)
             expect(yield* Effect.promise(() => readFile(snapshot.reviewUnitManifestPath, "utf8"))).toContain("unit-001")
+            const callDiff = JSON.parse(
+              yield* Effect.promise(() => readFile(snapshot.callDiffPath, "utf8")),
+            ) as { status: string }
+            expect(callDiff.status).toBe("available")
             const patch = yield* Effect.promise(() => readFile(snapshot.patchPath, "utf8"))
             expect(patch).toContain("export const value = 2")
             expect(patch).toContain("export const staged = true")
@@ -138,6 +163,97 @@ describe("adversarial review", () => {
               ),
             ).toContain("permission")
           }).pipe(Effect.ensuring(removeReviewSnapshot(snapshot).pipe(Effect.ignore)))
+        }),
+      (root) => Effect.promise(() => rm(root, { recursive: true, force: true })),
+    ),
+  )
+
+  it.live("captures only staged, unstaged, and untracked changes against HEAD", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(repository),
+      (root) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() => writeFile(join(root, "committed.ts"), "export const committed = true\n"))
+          yield* Effect.promise(() => run(root, ["git", "add", "committed.ts"]))
+          yield* Effect.promise(() => run(root, ["git", "commit", "-m", "branch change"]))
+          yield* Effect.promise(() => writeFile(join(root, "app.ts"), "export const value = 2\n"))
+          yield* Effect.promise(() => writeFile(join(root, "staged.ts"), "export const staged = true\n"))
+          yield* Effect.promise(() => run(root, ["git", "add", "staged.ts"]))
+          yield* Effect.promise(() => writeFile(join(root, "untracked.ts"), "export const untracked = true\n"))
+
+          const snapshot = yield* captureReviewSnapshot(root, "HEAD", randomUUID())
+          yield* Effect.gen(function* () {
+            expect(snapshot.baseRef).toBe("HEAD")
+            expect(snapshot.mergeBase).toBe(snapshot.head)
+            expect(snapshot.changedPaths).toEqual(["app.ts", "staged.ts", "untracked.ts"])
+            const patch = yield* Effect.promise(() => readFile(snapshot.patchPath, "utf8"))
+            expect(patch).toContain("export const value = 2")
+            expect(patch).toContain("export const staged = true")
+            expect(patch).toContain("export const untracked = true")
+            expect(patch).not.toContain("export const committed = true")
+          }).pipe(Effect.ensuring(removeReviewSnapshot(snapshot).pipe(Effect.ignore)))
+        }),
+      (root) => Effect.promise(() => rm(root, { recursive: true, force: true })),
+    ),
+  )
+
+  it.live("captures the last commit without dirty worktree changes", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(repository),
+      (root) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() => writeFile(join(root, "earlier.ts"), "export const earlier = true\n"))
+          yield* Effect.promise(() => run(root, ["git", "add", "earlier.ts"]))
+          yield* Effect.promise(() => run(root, ["git", "commit", "-m", "earlier change"]))
+          yield* Effect.promise(() => writeFile(join(root, "app.ts"), "export const value = 2\n"))
+          yield* Effect.promise(() => writeFile(join(root, "committed.ts"), "export const committed = true\n"))
+          yield* Effect.promise(() => run(root, ["git", "add", "app.ts", "committed.ts"]))
+          yield* Effect.promise(() => run(root, ["git", "commit", "-m", "last commit"]))
+          yield* Effect.promise(() => writeFile(join(root, "app.ts"), "export const value = 999\n"))
+          yield* Effect.promise(() => writeFile(join(root, "staged.ts"), "export const staged = true\n"))
+          yield* Effect.promise(() => run(root, ["git", "add", "staged.ts"]))
+          yield* Effect.promise(() => writeFile(join(root, "untracked.ts"), "export const untracked = true\n"))
+
+          const snapshot = yield* captureReviewSnapshot(root, "HEAD^", randomUUID(), "HEAD")
+          yield* Effect.gen(function* () {
+            expect(snapshot.baseRef).toBe("HEAD^")
+            expect(snapshot.baseTip).toBe(snapshot.mergeBase)
+            expect(snapshot.changedPaths).toEqual(["app.ts", "committed.ts"])
+            const patch = yield* Effect.promise(() => readFile(snapshot.patchPath, "utf8"))
+            expect(patch).toContain("export const value = 2")
+            expect(patch).toContain("export const committed = true")
+            expect(patch).not.toContain("export const value = 999")
+            expect(patch).not.toContain("export const earlier = true")
+            expect(patch).not.toContain("export const staged = true")
+            expect(patch).not.toContain("export const untracked = true")
+            expect(yield* Effect.promise(() => readFile(join(snapshot.snapshotDirectory, "app.ts"), "utf8"))).toBe(
+              "export const value = 2\n",
+            )
+            expect(yield* Effect.promise(() => pathExists(join(snapshot.snapshotDirectory, "staged.ts")))).toBe(false)
+            expect(yield* Effect.promise(() => pathExists(join(snapshot.snapshotDirectory, "untracked.ts")))).toBe(false)
+            const callDiff = JSON.parse(
+              yield* Effect.promise(() => readFile(snapshot.callDiffPath, "utf8")),
+            ) as { status: string; result?: { from: string; to: string } }
+            expect(callDiff).toMatchObject({ status: "available" })
+            expect(callDiff.result?.to).not.toBe("WORKTREE")
+          }).pipe(Effect.ensuring(removeReviewSnapshot(snapshot).pipe(Effect.ignore)))
+        }),
+      (root) => Effect.promise(() => rm(root, { recursive: true, force: true })),
+    ),
+  )
+
+  it.live("rejects a last-commit review when HEAD has no parent", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(repository),
+      (root) =>
+        Effect.gen(function* () {
+          const rootCommit = yield* Effect.promise(() => run(root, ["git", "rev-list", "--max-parents=0", "HEAD"]))
+          yield* Effect.promise(() => run(root, ["git", "checkout", "--detach", rootCommit]))
+          const failure = yield* captureReviewSnapshot(root, "HEAD^", randomUUID(), "HEAD").pipe(Effect.flip)
+          expect(failure).toMatchObject({
+            _tag: "GitReviewError",
+            operation: "git rev-parse HEAD^^{commit}",
+          })
         }),
       (root) => Effect.promise(() => rm(root, { recursive: true, force: true })),
     ),
@@ -208,7 +324,7 @@ describe("adversarial review", () => {
     ),
   )
 
-  it.live("runs semantic Luna units concurrently, orders one holistic Sol afterward, and reuses an unchanged result", () =>
+  it.live("runs Luna alongside independent Astra, reconciles afterward, and reuses an unchanged result", () =>
     Effect.acquireUseRelease(
       Effect.promise(repository),
       (root) =>
@@ -229,8 +345,8 @@ describe("adversarial review", () => {
           let active = 0
           let maximumActive = 0
           const fakeRuntime = Layer.succeed(
-            OpenCodeRuntime,
-            OpenCodeRuntime.of({
+            CodexRuntime,
+            CodexRuntime.of({
               start: ({ directory }) =>
                 Effect.sync(() => {
                   let usage = {
@@ -263,9 +379,12 @@ describe("adversarial review", () => {
                         const response: ReviewerResponse = {
                           role: task.role,
                           sessionId: randomUUID(),
-                          text: task.role === "sol-holistic"
-                            ? coordinatorJson
-                            : lunaJson(task.prompt, assignedPaths(task.prompt).includes("app.ts")),
+                          text: task.role.startsWith("astra-")
+                            ? coordinatorJson(task.prompt)
+                            : lunaJson(
+                                task.prompt,
+                                task.role.endsWith("-standards-modules") && assignedPaths(task.prompt).includes("app.ts"),
+                              ),
                         }
                         return response
                       }),
@@ -278,8 +397,8 @@ describe("adversarial review", () => {
             cwd: root,
             baseRef: "main",
             models: ReviewModels.make({
-              reviewer: "openai/gpt-5.6-luna",
-              coordinator: "openai/gpt-5.6-sol",
+              reviewer: "openai/gpt-5.6-luna#high",
+              coordinator: "openai/gpt-6-astra#high",
             }),
             onProgress: (event: ReviewProgressEvent) => Effect.sync(() => void progress.push(event)),
           }
@@ -290,9 +409,9 @@ describe("adversarial review", () => {
           }).pipe(Effect.provide(layer))
           expect(first.complete).toBe(true)
           expect(first.mode).toBe("full")
-          expect(first.costUsd).toBe(1)
+          expect(first.costUsd).toBe(1.5)
           expect(first.cachedInputPercent).toBe(60)
-          expect(first.summary).toContain("1 Luna-final finding remains active")
+          expect(first.summary).toContain("2 Luna-final findings remain active")
           expect(reactSkill).toContain("Vercel React Best Practices")
           expect(yield* Effect.promise(() => pathExists(join(dirname(first.historyPath), "runs", first.runId)))).toBe(
             false,
@@ -304,15 +423,47 @@ describe("adversarial review", () => {
             category: "repository-standards",
             sources: [expect.stringMatching(/^luna-/)],
           })
+          expect(first.findings.find((finding) => finding.title === "Custom Decision duplicates Effect Result")).toMatchObject({
+            status: "new",
+            category: "standards",
+            sources: [expect.stringMatching(/standards-modules$/)],
+          })
           expect(maximumActive).toBeGreaterThan(1)
-          expect(roles.at(-1)).toBe("sol-holistic")
-          expect(roles.filter((role) => role.startsWith("luna-"))).toHaveLength(3)
-          const lunaPrompt = [...prompts].find(([role]) => role.startsWith("luna-"))?.[1]
-          expect(lunaPrompt).toContain("repository-guidance.json")
-          expect(prompts.get("sol-holistic")).not.toContain("Playbook violation marker")
-          expect(prompts.get("sol-holistic")).toContain("Trace the changed public boundary")
-          expect(progress.some((event) => event.type === "snapshot_ready" && event.unitCount === 3)).toBe(true)
-          expect(progress.some((event) => event.type === "stage_started" && event.role === "sol-holistic")).toBe(true)
+          expect(roles.at(-1)).toBe("astra-reconcile")
+          expect(roles.filter((role) => role === "astra-independent")).toHaveLength(1)
+          expect(roles.filter((role) => role.startsWith("luna-"))).toHaveLength(4)
+          expect(roles.filter((role) => role === "luna-security")).toHaveLength(1)
+          expect(roles.filter((role) => role === "luna-standards-contracts")).toHaveLength(1)
+          expect(roles.filter((role) => role === "luna-standards-modules")).toHaveLength(1)
+          expect(roles.filter((role) => role === "luna-quality")).toHaveLength(1)
+          expect([...prompts.values()].filter((prompt) => prompt.includes("Assigned paths"))).toSatisfy(
+            (values: ReadonlyArray<string>) => values.every((prompt) => assignedPaths(prompt).length === 3),
+          )
+          const modulesPrompt = [...prompts].find(([role]) => role.endsWith("-standards-modules"))?.[1]
+          const securityPrompt = [...prompts].find(([role]) => role.endsWith("-security"))?.[1]
+          expect(modulesPrompt).toContain("repository-guidance.json")
+           expect(modulesPrompt).toContain("custom Result")
+           for (const role of ["luna-standards-contracts", "luna-standards-modules"]) {
+             const prompt = prompts.get(role)
+             expect(prompt).toContain("## effect-slopcop")
+             expect(prompt).toContain("only to Effect projects")
+             expect(prompt).toContain("effect-slopcop/<number>")
+             for (let rule = 1; rule <= 19; rule += 1) {
+               expect(prompt).toContain(`\n${rule}. `)
+             }
+             expect(prompt).toContain("never at operation call sites")
+             expect(prompt).toContain("Reviewers remain read-only")
+           }
+           for (const role of ["luna-security", "luna-quality", "astra-independent", "astra-reconcile"]) {
+             expect(prompts.get(role)).not.toContain("## effect-slopcop")
+           }
+           expect(securityPrompt).not.toContain("coding-standards/SKILL.md")
+          expect(prompts.get("astra-reconcile")).not.toContain("Playbook violation marker")
+          expect(prompts.get("astra-reconcile")).toContain("Trace the changed public boundary")
+          expect(prompts.get("astra-independent")).toContain("Review every changed path yourself")
+          expect(prompts.get("astra-independent")).not.toContain("Luna local evidence")
+          expect(progress.some((event) => event.type === "snapshot_ready" && event.unitCount === 7)).toBe(true)
+          expect(progress.some((event) => event.type === "stage_started" && event.role === "astra-reconcile")).toBe(true)
           expect(progress.some((event) => event.type === "review_finished" && event.complete)).toBe(true)
 
           const callsAfterFirstReview = roles.length
@@ -322,7 +473,7 @@ describe("adversarial review", () => {
             return yield* review.run(request)
           }).pipe(Effect.provide(layer))
           expect(second.mode).toBe("full")
-          expect(second.costUsd).toBe(1)
+          expect(second.costUsd).toBe(1.5)
           expect(second.cachedInputPercent).toBe(60)
           expect(yield* Effect.promise(() => pathExists(join(dirname(second.historyPath), "runs", second.runId)))).toBe(
             false,
@@ -331,8 +482,8 @@ describe("adversarial review", () => {
             id: directFinding?.id,
             status: "open",
           })
-          expect(prompts.get("sol-holistic")).not.toContain("Playbook violation marker")
-          expect(roles).toHaveLength(callsAfterFirstReview + 4)
+          expect(prompts.get("astra-reconcile")).not.toContain("Playbook violation marker")
+          expect(roles).toHaveLength(callsAfterFirstReview + 6)
 
           const callsAfterSecondReview = roles.length
           const third = yield* Effect.gen(function* () {
@@ -352,13 +503,13 @@ describe("adversarial review", () => {
             return yield* review.run({
               ...request,
               models: ReviewModels.make({
-                reviewer: "openai/gpt-5.6-luna-fast",
-                coordinator: "openai/gpt-5.6-sol",
+                reviewer: "openai/gpt-5.6-luna-fast#high",
+                coordinator: "openai/gpt-6-astra#high",
               }),
             })
           }).pipe(Effect.provide(layer))
           expect(changedModels.mode).toBe("full")
-          expect(roles).toHaveLength(callsAfterSecondReview + 4)
+          expect(roles).toHaveLength(callsAfterSecondReview + 6)
           const history = yield* Effect.promise(() => readFile(third.historyPath, "utf8"))
           expect(history).toContain('"type":"run_finished"')
         }),
@@ -366,17 +517,17 @@ describe("adversarial review", () => {
     ),
   )
 
-  it.live("does not cache a review when a Luna unit fails its coverage contract", () =>
+  it.live("does not cache a review when a Luna specialist fails its coverage contract", () =>
     Effect.acquireUseRelease(
       Effect.promise(repository),
       (root) =>
         Effect.gen(function* () {
           yield* Effect.promise(() => writeFile(join(root, "app.ts"), "export const value = 2\n"))
           const roles: Array<string> = []
-          let solPrompt = ""
+          let astraPrompt = ""
           const fakeRuntime = Layer.succeed(
-            OpenCodeRuntime,
-            OpenCodeRuntime.of({
+            CodexRuntime,
+            CodexRuntime.of({
               start: () =>
                 Effect.succeed({
                   usage: Effect.succeed({
@@ -388,12 +539,12 @@ describe("adversarial review", () => {
                   run: (task) =>
                     Effect.sync(() => {
                        roles.push(task.role)
-                       if (task.role === "sol-holistic") solPrompt = task.prompt
+                       if (task.role === "astra-reconcile") astraPrompt = task.prompt
                         return {
                           role: task.role,
                           sessionId: randomUUID(),
-                          text: task.role === "sol-holistic"
-                            ? coordinatorJson
+                          text: task.role.startsWith("astra-")
+                            ? coordinatorJson(task.prompt)
                             : JSON.stringify({
                                 summary: "incomplete coverage",
                                 reviewedPaths: [],
@@ -420,10 +571,10 @@ describe("adversarial review", () => {
             return yield* review.run(request)
           }).pipe(Effect.provide(layer))
           expect(first.complete).toBe(false)
-          expect(roles.filter((role) => role.startsWith("luna-"))).toHaveLength(2)
-          expect(roles.filter((role) => role === "sol-holistic")).toHaveLength(1)
-          expect(solPrompt).toContain("Luna units without valid local evidence")
-          expect(solPrompt).toContain("unit-001")
+          expect(roles.filter((role) => role.startsWith("luna-"))).toHaveLength(8)
+          expect(roles.filter((role) => role === "astra-reconcile")).toHaveLength(1)
+          expect(astraPrompt).toContain("Luna specialist assignments without valid local evidence")
+          expect(astraPrompt).toContain("complete-change")
           expect(yield* Effect.promise(() => pathExists(join(dirname(first.historyPath), "runs", first.runId)))).toBe(
             false,
           )
@@ -440,7 +591,61 @@ describe("adversarial review", () => {
     ),
   )
 
-  it.live("adds Effect Atom guidance to applicable combined Luna units", () =>
+  it.live("rejects an Astra review that does not independently cover every changed path", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(repository),
+      (root) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() => writeFile(join(root, "app.ts"), "export const value = 2\n"))
+          let astraCalls = 0
+          const fakeRuntime = Layer.succeed(
+            CodexRuntime,
+            CodexRuntime.of({
+              start: () =>
+                Effect.succeed({
+                  usage: Effect.succeed({
+                    costUsd: 0,
+                    inputTokens: 0,
+                    cacheReadTokens: 0,
+                    cacheWriteTokens: 0,
+                  }),
+                  run: (task) =>
+                    Effect.sync(() => {
+                      if (task.role === "astra-independent") astraCalls += 1
+                      return {
+                        role: task.role,
+                        sessionId: randomUUID(),
+                        text: task.role === "astra-independent"
+                          ? JSON.stringify({ summary: "incomplete", reviewedPaths: [], findings: [] })
+                          : lunaJson(task.prompt),
+                      }
+                    }),
+                }),
+            }),
+          )
+          const failure = yield* Effect.gen(function* () {
+            const review = yield* Review
+            return yield* review.run({
+              cwd: root,
+              baseRef: "main",
+              models: ReviewModels.make({ reviewer: "reviewer", coordinator: "coordinator" }),
+            })
+          }).pipe(
+            Effect.provide(Review.layerWithoutDependencies.pipe(Layer.provide(fakeRuntime))),
+            Effect.flip,
+          )
+
+          expect(failure).toMatchObject({
+            _tag: "ReviewerOutputError",
+            role: "astra-independent",
+          })
+          expect(astraCalls).toBe(2)
+        }),
+      (root) => Effect.promise(() => rm(root, { recursive: true, force: true })),
+    ),
+  )
+
+  it.live("adds Effect Atom guidance to applicable complete-diff specialists", () =>
     Effect.acquireUseRelease(
       Effect.promise(repository),
       (root) =>
@@ -463,8 +668,8 @@ describe("adversarial review", () => {
           const prompts = new Map<string, string>()
           let effectAtomSkill = ""
           const fakeRuntime = Layer.succeed(
-            OpenCodeRuntime,
-            OpenCodeRuntime.of({
+            CodexRuntime,
+            CodexRuntime.of({
               start: ({ directory }) =>
                 Effect.succeed({
                   usage: Effect.succeed({
@@ -485,7 +690,7 @@ describe("adversarial review", () => {
                       return {
                           role: task.role,
                           sessionId: randomUUID(),
-                          text: task.role === "sol-holistic" ? coordinatorJson : lunaJson(task.prompt),
+                          text: task.role.startsWith("astra-") ? coordinatorJson(task.prompt) : lunaJson(task.prompt),
                       }
                     }),
                 }),
@@ -504,9 +709,9 @@ describe("adversarial review", () => {
           }).pipe(Effect.provide(Review.layerWithoutDependencies.pipe(Layer.provide(fakeRuntime))))
 
           expect(result.complete).toBe(true)
-          expect(roles.filter((role) => role.startsWith("luna-"))).toHaveLength(1)
-          const lunaPrompt = [...prompts].find(([role]) => role.startsWith("luna-"))?.[1]
-          expect(lunaPrompt).toContain("effect-atom/SKILL.md")
+          expect(roles.filter((role) => role.startsWith("luna-"))).toHaveLength(4)
+          const standardsPrompt = [...prompts].find(([role]) => role.endsWith("-standards-contracts"))?.[1]
+          expect(standardsPrompt).toContain("effect-atom/SKILL.md")
           expect(effectAtomSkill).toContain("# Effect Atom")
           expect(yield* Effect.promise(() => pathExists(join(dirname(result.historyPath), "runs", result.runId)))).toBe(
             false,

@@ -18,10 +18,18 @@ import { GhStackClient, GitClient, HerdrClient, PluginContext } from "@heherdr/f
 import { openCommand } from "../src/framework/herdr/openPane.ts"
 import { worktreeCommand, worktreeFromCommand } from "../src/plugins/worktree/command.tsx"
 import { stackCommand } from "../src/plugins/stack/command.tsx"
+import { runCommand, runWorktreeCommand } from "../src/plugins/run/command.tsx"
 
 const heherdr = Command.make("heherdr").pipe(
   Command.withDescription("Modal herdr plugins — vim-style overlays for herdr"),
-  Command.withSubcommands([worktreeCommand, worktreeFromCommand, stackCommand, openCommand]),
+  Command.withSubcommands([
+    worktreeCommand,
+    worktreeFromCommand,
+    stackCommand,
+    runCommand,
+    runWorktreeCommand,
+    openCommand,
+  ]),
 )
 
 const cli = Command.run(heherdr, {

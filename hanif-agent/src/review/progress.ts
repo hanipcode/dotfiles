@@ -10,10 +10,20 @@ const safeRole = (role: string): string => reviewText(role, true).slice(0, 80)
 /** Format one safe review progress event for terminal stderr. */
 export function reviewProgressLine(event: ReviewProgressEvent): string {
   switch (event.type) {
+    case "run_started":
+      return `[review] run ${event.runId}; history ${reviewText(event.historyPath, true)}`
+    case "heartbeat":
+      return `[review] run ${event.runId} still active`
+    case "attempt_started":
+      return `[${safeRole(event.role)}] attempt ${event.attempt}, timeout ${event.timeoutMs / 1_000}s`
+    case "attempt_failed":
+      return `[${safeRole(event.role)}] attempt ${event.attempt} ${event.error.kind}: ${reviewText(event.error.message, true)}`
+    case "stage_reused":
+      return `[${safeRole(event.role)}] reused compatible checkpoint`
     case "snapshot_started":
       return "[review] capturing immutable snapshot"
     case "snapshot_ready":
-      return `[review] ${event.changedPathCount} changed paths grouped into ${event.unitCount} Luna ${event.unitCount === 1 ? "unit" : "units"}`
+      return `[review] ${event.changedPathCount} changed paths indexed in ${event.unitCount} ${event.unitCount === 1 ? "navigation unit" : "navigation units"}`
     case "cache_hit":
       return "[review] reused unchanged completed review"
     case "stage_started":
@@ -62,14 +72,15 @@ const safeTarget = (path: string, runtimeDirectory: string): string => {
   return normalized
 }
 
-/** Convert an allowlisted OpenCode tool invocation into a bounded, non-sensitive activity description. */
+/** Convert reviewer tool activity into a bounded, non-sensitive progress description. */
 export function reviewerToolActivity(
   tool: string,
   input: Readonly<Record<string, unknown>>,
   runtimeDirectory: string,
 ): string | null {
   const lower = tool.toLowerCase()
-  if (lower === "webfetch" || lower === "websearch") return "checking external documentation"
+  if (lower === "command_execution") return "inspecting immutable snapshot"
+  if (lower === "webfetch" || lower === "websearch" || lower === "web_search") return "checking external documentation"
   if (lower.includes("linear") || lower.includes("atlassian") || lower.includes("jira")) {
     return "checking goal ticket"
   }

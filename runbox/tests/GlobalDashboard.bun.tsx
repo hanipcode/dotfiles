@@ -265,6 +265,54 @@ describe("GlobalDashboard", () => {
     }
   })
 
+  it("does not report zero process metrics while a command is preparing", async () => {
+    const preparing = CommandRecord.make({
+      id: "apps/operator:dev",
+      packagePath: "apps/operator",
+      script: "dev",
+      args: [],
+      status: "preparing",
+      pid: null,
+      startedAt: null,
+      exitCode: null,
+      message: "preparing repository with Luna",
+      logFile: "/logs/dev.log",
+      processToken: "token",
+    })
+    const preparingView: GlobalView = {
+      ...view,
+      selected: view.selected === null ? null : {
+        ...view.selected,
+        state: RepoState.make({ ...state, commands: { [preparing.id]: preparing } }),
+        selectedCommand: preparing,
+        selectedLog: "Preparing dependencies",
+        selectedMetrics: null,
+        packages: view.selected.packages.map((pkg) => ({
+          ...pkg,
+          scripts: pkg.scripts.map((script) => ({ ...script, tracked: preparing })),
+        })),
+      },
+    }
+    const setup = await testRender(
+      <GlobalDashboard
+        initial={preparingView}
+        onInspect={() => new Promise(() => {})}
+        onPlan={() => new Promise(() => {})}
+        onCommit={() => new Promise(() => {})}
+        onExecute={() => new Promise(() => {})}
+      />,
+      { width: 220, height: 28, useMouse: true },
+    )
+    try {
+      await setup.flush()
+      const frame = setup.captureCharFrame()
+      expect(frame).toContain("preparing  pid -  cpu -  memory -  processes -  uptime -")
+      expect(frame).not.toContain("uptime 0s")
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
   it("reviews a run plan before executing it", async () => {
     let executions = 0
     let plans = 0

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest"
 import { Effect, Layer } from "effect"
-import { mkdtemp, readFile } from "node:fs/promises"
+import { appendFile, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { RepoState } from "../src/domain.ts"
@@ -43,6 +43,36 @@ const state = RepoState.make({
 })
 
 describe("preparation memory", () => {
+  it.effect("recovers crash tails and rebuilds indexes after external edits or daemon restart", () => Effect.gen(function* () {
+    const root = yield* Effect.promise(() => mkdtemp(join(tmpdir(), "runbox-memory-recovery-")))
+    const file = join(root, "state", "repo", "run-history.jsonl")
+    const layer = PreparationMemory.layer.pipe(Layer.provide(pathLayer(root)))
+    const first = { kind: "run", phase: "succeeded", runId: "one", scope: "setup", packagePath: "", script: null, fingerprint: "one" }
+    const second = { ...first, runId: "two", fingerprint: "two" }
+    yield* Effect.gen(function* () {
+      const memory = yield* PreparationMemory
+      yield* memory.appendHistory("repo", first)
+      const original = yield* Effect.promise(() => readFile(file, "utf8"))
+      yield* Effect.promise(() => appendFile(file, '{"kind":"run","broken":'))
+      expect(yield* memory.hasSuccess(state, "one", "", null)).toBe(true)
+      yield* memory.appendHistory("repo", second)
+      expect(yield* memory.hasSuccess(state, "two", "", null)).toBe(true)
+      const bytes = yield* Effect.promise(() => readFile(file, "utf8"))
+      expect(bytes.startsWith(original)).toBe(true)
+      expect(bytes.trim().split("\n")).toHaveLength(2)
+      const names = yield* Effect.promise(() => readdir(join(root, "state", "repo")))
+      const backup = names.find((name) => name.startsWith("run-history.jsonl.partial-"))
+      expect(backup).toBeDefined()
+      expect(yield* Effect.promise(() => readFile(join(root, "state", "repo", backup ?? ""), "utf8"))).toBe('{"kind":"run","broken":')
+      yield* Effect.promise(() => writeFile(file, `${JSON.stringify(second)}\n`))
+      expect(yield* memory.hasSuccess(state, "one", "", null)).toBe(false)
+    }).pipe(Effect.provide(layer))
+    yield* Effect.gen(function* () {
+      const memory = yield* PreparationMemory
+      expect(yield* memory.hasSuccess(state, "two", "", null)).toBe(true)
+      expect(JSON.parse(yield* memory.context(state, "", null))).toMatchObject({ recentHistory: [{ runId: "two" }] })
+    }).pipe(Effect.provide(layer))
+  }))
   it("redacts secret values while preserving commands and keys", () => {
     expect(sanitizeText("API_TOKEN=secret Bearer abc.def phc_12345")).toBe(
       "API_TOKEN=[REDACTED] Bearer [REDACTED] [REDACTED]",
@@ -55,39 +85,29 @@ describe("preparation memory", () => {
   })
 
   it("normalizes tool history and structured agent responses", () => {
-    const output = [
-      JSON.stringify({
-        type: "tool_use",
-        timestamp: 10,
-        sessionID: "session",
-        part: {
-          tool: "bash",
-          callID: "call",
-          state: {
-            status: "completed",
-            input: { command: "API_TOKEN=secret npm ci", workdir: "/repo" },
-            output: "installed with API_KEY=value",
-            metadata: { exit: 0 },
-            time: { start: 1, end: 9 },
-          },
-        },
-      }),
-      JSON.stringify({
-        type: "text",
-        part: { text: JSON.stringify({
-          summary: "ready",
-          instructionChanges: [{
-            key: "setup.dependencies",
-            status: "active",
-            instruction: "Run npm ci when node_modules is missing.",
-            reason: "lockfile install succeeded",
-            evidence: ["npm ci exited 0"],
-          }],
-        }) },
-      }),
-    ].join("\n")
+    const output = JSON.stringify({
+      summary: "ready",
+      instructionChanges: [{
+        key: "setup.dependencies",
+        status: "active",
+        instruction: "Run npm ci when node_modules is missing.",
+        reason: "lockfile install succeeded",
+        evidence: ["npm ci exited 0"],
+      }],
+    })
 
-    expect(toolHistoryRecords(output, "run")).toEqual([
+    expect(toolHistoryRecords([{
+      type: "tool",
+      sessionId: "session",
+      callId: "call",
+      tool: "bash",
+      input: { command: "API_TOKEN=secret npm ci", workdir: "/repo" },
+      status: "completed",
+      startedAt: 1,
+      endedAt: 9,
+      exitCode: 0,
+      output: "installed with API_KEY=value",
+    }], "run")).toEqual([
       expect.objectContaining({
         tool: "bash",
         durationMs: 8,

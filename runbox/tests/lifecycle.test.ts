@@ -2,11 +2,11 @@ import { describe, expect, it } from "@effect/vitest"
 import { Effect } from "effect"
 import { chmod, mkdtemp, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import { spawnSync } from "node:child_process"
 
 const cli = resolve("bin/runbox.tsx")
-const fakeOpenCode = resolve("tests/fixtures/fake-opencode")
+const fakeOpenCode = resolve("tests/fixtures/bin/opencode")
 const fakeGh = resolve("tests/fixtures/fake-gh")
 
 const run = (cwd: string, env: Readonly<Record<string, string>>, ...args: ReadonlyArray<string>) =>
@@ -39,7 +39,7 @@ describe("launch lifecycle", () => {
         RUNBOX_HOME: join(home, "runbox"),
         XDG_DATA_HOME: join(home, "legacy-data"),
         XDG_STATE_HOME: join(home, "legacy-state"),
-        RUNBOX_OPENCODE_BIN: fakeOpenCode,
+        PATH: `${dirname(fakeOpenCode)}:${process.env.PATH ?? ""}`,
         RUNBOX_GH_BIN: fakeGh,
         RUNBOX_STACK_JSON: "",
         RUNBOX_STARTUP_GRACE_MS: "100",

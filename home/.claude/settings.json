@@ -63,11 +63,12 @@
       "Bash(git mv:*)",
       "Bash(sed:*)",
       "Bash(npm view:*)",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "mcp__pencil"
     ],
-    "defaultMode": "default"
+    "defaultMode": "auto"
   },
-  "model": "opus",
+  "model": "opus[1m]",
   "hooks": {
     "SessionStart": [
       {

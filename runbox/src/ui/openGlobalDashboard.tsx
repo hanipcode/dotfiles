@@ -6,6 +6,7 @@ import { Paths } from "../services/Paths.ts"
 import { StateStore } from "../services/StateStore.ts"
 import { StorageMigration } from "../services/StorageMigration.ts"
 import { Shell } from "../services/Shell.ts"
+import { OpenCode } from "../services/OpenCode.ts"
 import { GlobalDashboard } from "./GlobalDashboard.tsx"
 import { runApp } from "./runApp.tsx"
 import type { InspectionQuery } from "../application/model.ts"
@@ -18,14 +19,14 @@ interface GlobalDashboardOptions {
 
 export const openGlobalDashboard = Effect.fn("Ui.openGlobalDashboard")(function* (options: GlobalDashboardOptions = {}) {
   const application = yield* RunboxApplication
-  const runtime = yield* Effect.runtime<Git | Paths | Shell | StateStore | StorageMigration>()
+  const runtime = yield* Effect.runtime<Git | OpenCode | Paths | Shell | StateStore | StorageMigration>()
   const runPromise = Runtime.runPromise(runtime)
   const inventory = yield* application.inspect()
   const repositoryId = options.query?.repositoryId ?? inventory.repositories[0]?.repoId
   const initial = repositoryId === undefined
     ? inventory
     : yield* application.inspect({ ...options.query, repositoryId })
-  const result = <A, E, R extends Git | Paths | Shell | StateStore | StorageMigration>(effect: Effect.Effect<A, E, R>): Promise<A> =>
+  const result = <A, E, R extends Git | OpenCode | Paths | Shell | StateStore | StorageMigration>(effect: Effect.Effect<A, E, R>): Promise<A> =>
     runPromise(effect.pipe(Effect.either)).then((either) => {
       if (either._tag === "Right") return either.right
       const info = toErrorInfo(either.left)

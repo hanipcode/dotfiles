@@ -1,17 +1,56 @@
 # Logic Prototype
 
-A tiny interactive terminal app that lets the user drive a state model by hand. Use this when the question is about **business logic, state transitions, or data shape** — the kind of thing that looks reasonable on paper but only feels wrong once you push it through real cases.
+A small interactive demo that lets someone drive a state model by hand. Use this when the question is about **business logic, state transitions, or data shape** — the kind of thing that looks reasonable on paper but only feels wrong once you push it through real cases.
 
 ## When this is the right shape
 
 - "I'm not sure if this state machine handles the edge case where X then Y."
 - "Does this data model actually let me represent the case where..."
 - "I want to feel out what the API should look like before writing it."
-- Anything where the user wants to **press buttons and watch state change**.
+- Anything where someone wants to **press buttons and watch state change**.
 
 If the question is "what should this look like" — wrong branch. Use [UI.md](UI.md).
 
-## Process
+## Pick the delivery shape
+
+Default to a **single, self-contained HTML file**. It is a shareable demo with nothing to install, so a designer, PM, or domain expert can feel the model directly in domain language rather than code vocabulary.
+
+Use the **host-language TUI fallback** only when the question specifically depends on host-runtime behavior, portability into a non-JavaScript module, terminal interaction, or the user explicitly requests a TUI.
+
+## Shareable HTML process
+
+### 1. State the question visibly
+
+Write the state model and exact question in a visible introduction at the top of the demo, not only in a comment. The recipient must be able to check that the demo answers the intended question without reading source.
+
+### 2. Isolate portable logic
+
+Put the logic in a single `<script>` block as a small, pure module that can be lifted into production code later. Choose the shape that fits the question: a pure reducer, explicit state machine, pure function set, or a class/module with a clear method surface.
+
+Keep the model independent of the shell: no DOM access, `document`, or button handlers inside it. The page calls the model; nothing flows the other direction.
+
+### 3. Build one shareable file
+
+Use plain inline HTML, CSS, and JavaScript with no framework, bundler, or server. It must open by double-click and survive being emailed around.
+
+Use domain-language labels and explain behavior in plain words. Lay out:
+
+1. **Title and one-line explanation** of the question being explored.
+2. **Current state** as readable labelled fields, re-rendered after every action, with a short callout for the last change when useful.
+3. **Free-play controls** with one always-available button per action.
+4. **Guided walkthroughs** as scenario tabs with a plain-language setup, what to watch for, and ordered real action buttons. Starting a walkthrough resets to a known state.
+
+Include scenarios for the happy path, a tricky edge case, and an illegal attempt. Keep the presentation restrained: clean typography, generous spacing, one accent color, and no animation or gimmicks competing with the model.
+
+### 4. Hand it over and capture it
+
+Open or send the file so the recipient can use guided scenarios and free play. Once it answers the question, lift the validated model into the real module and capture the HTML shell on the throwaway branch described by [SKILL.md](SKILL.md).
+
+Do not add tests, wire it to the real database, generalize beyond the question, couple the model to DOM concerns, require build tooling, or ship the HTML shell to production.
+
+## Host-language TUI fallback
+
+Use this process only when the delivery-shape criteria above select the fallback.
 
 ### 1. State the question
 

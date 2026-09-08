@@ -1,8 +1,6 @@
-import { basename } from "node:path"
-
-const targetPatchLines = 4_000
-const targetPatchBytes = 160 * 1_024
-const targetPathCount = 40
+const targetPatchLines = 1_200
+const targetPatchBytes = 64 * 1_024
+const targetPathCount = 12
 
 /** Complete patch text for one changed repository path. */
 export interface ReviewPatchFile {
@@ -268,11 +266,4 @@ export function planReviewUnits(files: ReadonlyArray<ReviewPatchFile>): Readonly
       patchBytes: Buffer.byteLength(patch),
     }
   })
-}
-
-/** Produce a compact, terminal-safe label for a Luna unit role. */
-export function reviewUnitRole(unit: Pick<PlannedReviewUnit, "id" | "label">, total: number): string {
-  const index = Number.parseInt(unit.id.slice("unit-".length), 10)
-  const label = basename(unit.label).replace(/[^a-zA-Z0-9._+-]+/g, "-").slice(0, 36)
-  return `luna-${Number.isNaN(index) ? unit.id : index}-of-${total}-${label || "change"}`
 }

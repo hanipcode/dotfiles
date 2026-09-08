@@ -1,8 +1,13 @@
 {
   "$schema": "https://opencode.ai/tui.json",
   "theme": "catppuccin-macchiato",
+  "plugin_enabled": {
+    "session-tabs": false
+  },
   "keybinds": {
+    "agent_cycle": "tab",
     "model_cycle_favorite": "shift+tab",
-    "agent_cycle_reverse": "none"
+    "agent_cycle_reverse": "none",
+    "prompt.autocomplete.complete": "tab"
   }
 }

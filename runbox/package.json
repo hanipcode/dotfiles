@@ -21,6 +21,7 @@
     "@effect/platform-bun": "^0.91.2",
     "@effect/printer": "^0.51.0",
     "@effect/printer-ansi": "^0.51.0",
+    "@opencode-ai/sdk": "1.18.16",
     "@opentui/core": "^0.5.1",
     "@opentui/react": "^0.5.1",
     "@parcel/watcher": "^2.6.0",

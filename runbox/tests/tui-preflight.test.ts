@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest"
 import { chmod, mkdtemp, writeFile } from "node:fs/promises"
 import { spawn, spawnSync } from "node:child_process"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
+import { dirname, join, resolve } from "node:path"
 
 const cli = resolve("bin/runbox.tsx")
-const fakeOpenCode = resolve("tests/fixtures/fake-opencode")
+const fakeOpenCode = resolve("tests/fixtures/bin/opencode")
 
 const run = (
   cwd: string,
@@ -43,7 +43,7 @@ describe("TUI activation", () => {
       RUNBOX_HOME: join(home, "runbox"),
       XDG_DATA_HOME: join(home, "legacy-data"),
       XDG_STATE_HOME: join(home, "legacy-state"),
-      RUNBOX_OPENCODE_BIN: fakeOpenCode,
+        PATH: `${dirname(fakeOpenCode)}:${process.env.PATH ?? ""}`,
       RUNBOX_STARTUP_GRACE_MS: "0",
       RUNBOX_STABILIZATION_MS: "0",
       RUNBOX_TEST_CLI: cli,

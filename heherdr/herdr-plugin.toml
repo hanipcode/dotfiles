@@ -61,3 +61,27 @@ id = "stack"
 title = "Stack branches"
 placement = "overlay"
 command = ["bun", "run", "bin/heherdr.ts", "stack"]
+
+# --- run ----------------------------------------------------------------------
+
+[[actions]]
+id = "run"
+title = "Terminal"
+command = ["bun", "run", "bin/heherdr.ts", "open", "run", "popup", "100%", "45%"]
+
+[[panes]]
+id = "run"
+title = "Terminal"
+placement = "popup"
+command = ["bun", "run", "bin/heherdr.ts", "run"]
+
+[[actions]]
+id = "run-worktree"
+title = "Terminal in worktree"
+command = ["bun", "run", "bin/heherdr.ts", "open", "run-worktree", "popup", "100%", "45%"]
+
+[[panes]]
+id = "run-worktree"
+title = "Terminal in worktree"
+placement = "popup"
+command = ["bun", "run", "bin/heherdr.ts", "run-worktree"]

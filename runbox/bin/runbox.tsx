@@ -10,7 +10,7 @@ import { bootstrap, daemonForward, daemonRequest, ensureDaemonConfigured, source
 import { ensureCommitted, type CommitOptions } from "../src/commit.ts"
 import type { ProjectContext, RepoSnapshot } from "../src/domain.ts"
 import { commandId, repositoryRoot, sameSource } from "../src/domain.ts"
-import { RunboxError, toErrorInfo } from "../src/errors.ts"
+import { commandFailureError, RunboxError, toErrorInfo } from "../src/errors.ts"
 import { formatLogOutput } from "../src/logFormat.ts"
 import { ApplicationLayer, CoreLayer } from "../src/layers.ts"
 import { RunboxApplication } from "../src/application/RunboxApplication.ts"
@@ -33,9 +33,28 @@ const commitMessageOption = Options.text("commit-message").pipe(Options.optional
 const linesOption = Options.integer("lines").pipe(Options.withDefault(200))
 const environmentSourceOption = Options.text("environment-source").pipe(Options.optional)
 const watchOption = Options.boolean("watch").pipe(Options.withAlias("w"))
+const waitReadyOption = Options.boolean("wait-ready").pipe(Options.withDescription("Wait for the configured readiness check, not just a live process"))
 const executableArg = Args.text({ name: "executable" })
 const commandArgs = Args.text({ name: "args" }).pipe(Args.repeated)
 const FORWARD_CAPTURE_LIMIT = 64 * 1024
+
+// BunRuntime exits when the effect completes; await pipe delivery before reporting JSON completion.
+const printJsonValue = (value: unknown): Effect.Effect<void, RunboxError> => Effect.async((resume) => {
+  const failed = (cause: Error) => resume(Effect.fail(new RunboxError({
+    operation: "write JSON result",
+    message: "JSON result could not be delivered to stdout",
+    code: "STDOUT_WRITE_FAILED",
+    suggestion: "Inspect retained Runbox logs before retrying; the requested operation may have completed.",
+    details: cause.message,
+  })))
+  process.stdout.once("error", failed)
+  process.stdout.write(`${JSON.stringify(value, null, 2)}\n`, (error) => {
+    process.stdout.off("error", failed)
+    if (error) failed(error)
+    else resume(Effect.void)
+  })
+  return Effect.sync(() => { process.stdout.off("error", failed) })
+})
 
 const safe = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
@@ -46,7 +65,7 @@ const safe = <A, E, R>(
     Effect.catchAll((error) => {
       const info = toErrorInfo(error)
       return (json
-        ? Console.log(JSON.stringify({ ok: false, error: info }, null, 2))
+        ? printJsonValue({ ok: false, error: info }).pipe(Effect.catchAll(() => Effect.void))
         : Console.error(
             `runbox: ${info.code}: ${info.message}\n\nsuggestion: ${info.suggestion}${
               info.details === null ? "" : `\n\ndetails:\n${info.details}`
@@ -58,7 +77,7 @@ const safe = <A, E, R>(
   )
 
 const printJson = (command: string, data: unknown) =>
-  Console.log(JSON.stringify({ ok: true, command, data }, null, 2))
+  printJsonValue({ ok: true, command, data })
 
 const withPreparationProgress = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
@@ -129,6 +148,7 @@ const waitForCommand = Effect.fn("Cli.waitForCommand")(function* (
   socket: string,
   packagePath: string,
   id: string,
+  waitReady = false,
 ) {
   const deadline = Date.now() + 10 * 60_000
   while (Date.now() < deadline) {
@@ -136,7 +156,18 @@ const waitForCommand = Effect.fn("Cli.waitForCommand")(function* (
       Effect.flatMap(requireSnapshot),
     )
     const record = snapshot.state.commands[id]
-    if (record?.status === "running" || record?.status === "completed") return snapshot
+    if (record?.status === "running" || record?.status === "completed") {
+      if (!waitReady || record.readiness === "ready") return snapshot
+      if (record.readiness === undefined || record.readiness === "not-configured") {
+        return yield* new RunboxError({
+          operation: "wait for command readiness",
+          message: "Command has no readiness check configured",
+          code: "READINESS_NOT_CONFIGURED",
+          suggestion: "Configure runbox.readiness for this script in package.json, or omit --wait-ready.",
+        })
+      }
+      if (record.status === "completed") return yield* commandFailureError(record)
+    }
     if (record?.status === "failed") {
       yield* Effect.sleep(250)
       const confirmation = yield* daemonRequest(socket, { type: "status", packagePath }).pipe(
@@ -144,13 +175,7 @@ const waitForCommand = Effect.fn("Cli.waitForCommand")(function* (
       )
       const current = confirmation.state.commands[id]
       if (current?.status !== "failed") continue
-      return yield* new RunboxError({
-        operation: `start ${record.script}`,
-        message: current.message ?? "command failed during startup",
-        code: "COMMAND_FAILED",
-        suggestion: "Inspect the retained command log and retry after correcting the startup failure.",
-        retryable: true,
-      })
+      return yield* commandFailureError(current)
     }
     yield* Effect.sleep(100)
   }
@@ -166,7 +191,7 @@ const waitForCommand = Effect.fn("Cli.waitForCommand")(function* (
 const runScript = Effect.fn("Cli.runScript")(function* (
   script: string,
   args: ReadonlyArray<string>,
-  options: CommitOptions & { readonly json: boolean; readonly watch: boolean },
+  options: CommitOptions & { readonly json: boolean; readonly watch: boolean; readonly waitReady: boolean },
 ) {
   let project = yield* discover()
   const projects = yield* Project
@@ -183,10 +208,10 @@ const runScript = Effect.fn("Cli.runScript")(function* (
     source: sourceRef(project),
     watch: options.watch,
   } as const
-  if (options.json || options.noTui || !process.stdout.isTTY) {
+  if (options.json || options.noTui || options.waitReady || !process.stdout.isTTY) {
     yield* daemonRequest(socket, request)
     const snapshot = yield* withPreparationProgress(
-      waitForCommand(socket, project.packagePath, commandId(project.packagePath, script)),
+      waitForCommand(socket, project.packagePath, commandId(project.packagePath, script), options.waitReady),
       options.json,
       `Starting ${script}`,
     )
@@ -222,15 +247,16 @@ const root = Command.make(
     agentCommit: agentCommitOption,
     commitMessage: commitMessageOption,
     watch: watchOption,
+    waitReady: waitReadyOption,
   },
-  ({ agentCommit, args, commitMessage, json, noTui, script, watch }) =>
+  ({ agentCommit, args, commitMessage, json, noTui, script, watch, waitReady }) =>
     safe(Option.isSome(script)
-      ? runScript(script.value, args, { noTui, json, agentCommit, commitMessage, watch })
+      ? runScript(script.value, args, { noTui, json, agentCommit, commitMessage, watch, waitReady })
       : Effect.gen(function* () {
           if (!json && !noTui && process.stdout.isTTY) return yield* openGlobalDashboard()
           const application = yield* RunboxApplication
           const view = yield* application.inspect()
-          if (json) yield* Console.log(JSON.stringify({ ok: true, command: "projects", data: view }, null, 2))
+          if (json) yield* printJsonValue({ ok: true, command: "projects", data: view })
           else {
             for (const repository of view.repositories) {
               yield* Console.log(`${repository.name}  ${repository.activeCommandCount} active  ${repository.storage}`)
@@ -250,9 +276,10 @@ const runCommand = Command.make(
     agentCommit: agentCommitOption,
     commitMessage: commitMessageOption,
     watch: watchOption,
+    waitReady: waitReadyOption,
   },
-  ({ agentCommit, args, commitMessage, json, noTui, script, watch }) =>
-    safe(runScript(script, args, { noTui, json, agentCommit, commitMessage, watch }), json),
+  ({ agentCommit, args, commitMessage, json, noTui, script, watch, waitReady }) =>
+    safe(runScript(script, args, { noTui, json, agentCommit, commitMessage, watch, waitReady }), json),
 ).pipe(Command.withDescription("Run a script whose name collides with a runbox command"))
 
 const syncCommand = Command.make(
@@ -342,7 +369,7 @@ const forwardCommand = Command.make(
         if (result.exitCode === 0 && result.signal === null) {
           yield* printJson("forward", data)
         } else {
-          yield* Console.log(JSON.stringify({
+          yield* printJsonValue({
             ok: false,
             command: "forward",
             data,
@@ -356,7 +383,7 @@ const forwardCommand = Command.make(
               retryable: false,
               details: null,
             },
-          }, null, 2))
+          })
         }
       } else {
         for (const warning of result.warnings) {
@@ -378,8 +405,9 @@ const stackCommand = Command.make(
     args: scriptArgs,
     json: jsonOption,
     noTui: noTuiOption,
+    waitReady: waitReadyOption,
   },
-  ({ args, json, noTui, script }) =>
+  ({ args, json, noTui, script, waitReady }) =>
     safe(Effect.gen(function* () {
       const project = yield* discover()
       const projects = yield* Project
@@ -394,10 +422,10 @@ const stackCommand = Command.make(
         args,
         source,
       } as const
-      if (json || noTui || !process.stdout.isTTY) {
+      if (json || noTui || waitReady || !process.stdout.isTTY) {
         yield* daemonRequest(socket, request)
         const snapshot = yield* withPreparationProgress(
-          waitForCommand(socket, project.packagePath, commandId(project.packagePath, script)),
+          waitForCommand(socket, project.packagePath, commandId(project.packagePath, script), waitReady),
           json,
           `Activating stack command ${script}`,
         )
@@ -697,9 +725,9 @@ const doctorCommand = Command.make(
       )
       yield* executableCheck(
         "opencode",
-        process.env.RUNBOX_OPENCODE_BIN ?? "opencode",
+        "opencode",
         true,
-        "Install OpenCode and authenticate openai/gpt-5.6-luna.",
+        "Install stable OpenCode and authenticate openai/gpt-5.6-luna.",
       )
       yield* executableCheck(
         "github-cli",

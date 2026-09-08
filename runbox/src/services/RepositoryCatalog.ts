@@ -11,7 +11,7 @@ import type {
   RepositorySummary,
   WorktreeView,
 } from "../application/model.ts"
-import { commandId, repositoryRoot, stateRevision, type RepoState } from "../domain.ts"
+import { commandId, isRepositoryPreparation, repositoryRoot, stateRevision, type RepoState } from "../domain.ts"
 import { RunboxError, toErrorInfo } from "../errors.ts"
 import { LogStore } from "./LogStore.ts"
 import { Metrics } from "./Metrics.ts"
@@ -292,7 +292,12 @@ export class RepositoryCatalog extends Context.Tag("@runbox/RepositoryCatalog")<
           if (packageResult?._tag === "Right") issues.push(...packageResult.right.problems)
           if (packageResult?._tag === "Left") issues.push(problem(packageResult.left))
           const record = query.commandId === undefined ? null : state.commands[query.commandId] ?? null
-          const selectedLog = record === null ? "" : yield* logs.tail(record.logFile).pipe(Effect.orElseSucceed(() => ""))
+          const selectedLogFile = record !== null && isRepositoryPreparation(record)
+            ? join(paths.repoState(state.repoId), "logs", "setup.log")
+            : record?.logFile
+          const selectedLog = selectedLogFile === undefined
+            ? ""
+            : yield* logs.tail(selectedLogFile).pipe(Effect.orElseSucceed(() => ""))
           const metricValues = record?.pid === null || record?.pid === undefined
             ? {}
             : yield* metrics.forPids([record.pid]).pipe(Effect.orElseSucceed(() => ({})))

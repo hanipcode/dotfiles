@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src data:; font-src 'self'; connect-src 'none'">
+  <title>Mermaid Studio</title>
+  <style>
+    :root{color-scheme:dark;--base:#24273a;--mantle:#1e2030;--crust:#181926;--surface:#363a4f;--surface2:#494d64;--overlay:#6e738d;--text:#cad3f5;--sub:#a5adcb;--mauve:#c6a0f6;--blue:#8aadf4;--green:#a6da95;--red:#ed8796;--yellow:#eed49f;--diagram-secondary:color-mix(in srgb,var(--text) 50%,var(--sub));--diagram-muted:color-mix(in srgb,var(--text) 30%,var(--sub) 70%)}
+    *{box-sizing:border-box}html,body{height:100%;margin:0;overflow:hidden;background:var(--crust);color:var(--text);font:13px -apple-system,BlinkMacSystemFont,"SF Pro Display",sans-serif}button,textarea{font:inherit}button{color:inherit}
+    .app{height:100vh;padding-top:38px;display:grid;grid-template-columns:minmax(300px,36%) minmax(0,1fr);background:var(--crust);transition:grid-template-columns .18s ease}.app.sidebar-collapsed{grid-template-columns:0 minmax(0,1fr)}
+    .editor-pane{min-width:0;overflow:hidden;display:grid;grid-template-rows:auto minmax(0,1fr) auto;border-right:1px solid var(--surface2);background:linear-gradient(180deg,var(--mantle),var(--crust));transition:opacity .12s ease}.sidebar-collapsed .editor-pane{opacity:0;pointer-events:none}
+    .pane-head{height:55px;padding:0 17px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #494d6488}.brand{display:flex;align-items:center;gap:10px}.mark{width:28px;height:28px;border-radius:9px;display:grid;place-items:center;background:linear-gradient(145deg,var(--mauve),var(--blue));color:var(--crust);font-size:14px;font-weight:900;box-shadow:0 7px 20px #c6a0f62c}.brand-copy b{display:block;font-size:14px;letter-spacing:-.02em}.brand-copy span{display:block;margin-top:2px;color:var(--overlay);font-size:10px;letter-spacing:.08em;text-transform:uppercase}.sample{border:1px solid var(--surface2);border-radius:7px;background:var(--surface);padding:6px 9px;cursor:pointer;color:var(--sub);font-size:11px}.sample:hover{border-color:var(--mauve);color:var(--text)}
+    textarea{width:100%;height:100%;resize:none;border:0;outline:0;padding:19px 20px 30px;background:transparent;color:var(--text);font:12.5px/1.65 "SFMono-Regular",Menlo,Monaco,monospace;tab-size:2;white-space:pre;overflow:auto;caret-color:var(--mauve)}textarea::selection{background:#8aadf43c}.editor-foot{min-height:36px;padding:8px 15px;display:flex;align-items:center;gap:8px;border-top:1px solid #494d6470;color:var(--overlay);font-size:10px}.status-dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 8px #a6da9566}.editor-foot.error{color:var(--red)}.editor-foot.error .status-dot{background:var(--red);box-shadow:0 0 8px #ed879666}
+    .preview-pane{min-width:0;display:grid;grid-template-rows:55px minmax(0,1fr);background:var(--base)}.toolbar{padding:0 16px;display:flex;align-items:center;gap:7px;border-bottom:1px solid #494d6488;background:#1e2030e8}.toolbar-title{margin-right:auto}.toolbar-title b{display:block;font-size:13px}.toolbar-title span{display:block;margin-top:2px;color:var(--overlay);font-size:10px}.tool{height:30px;min-width:30px;padding:0 9px;border:1px solid var(--surface2);border-radius:8px;background:var(--surface);cursor:pointer}.tool:hover{border-color:var(--overlay);background:var(--surface2)}.zoom-value{width:51px;text-align:center;color:var(--sub);font:10px "SFMono-Regular",monospace}.live{height:32px;margin-left:7px;padding:0 13px;border:0;border-radius:9px;background:var(--text);color:var(--crust);font-weight:750;cursor:pointer;box-shadow:0 6px 16px #0004}.live:hover{background:white;transform:translateY(-1px)}
+    .stage{position:relative;min-width:0;overflow:hidden;touch-action:none;cursor:grab;background-color:var(--base);background-image:radial-gradient(circle,#494d646f 1px,transparent 1px);background-size:22px 22px}.stage.dragging{cursor:grabbing}.scene{position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform}.diagram{display:inline-block;padding:24px;border:1px solid #494d64a0;border-radius:12px;background:#1e2030f2;box-shadow:0 18px 55px #0004}.diagram.merman-output{padding:30px;border:0;background:transparent;box-shadow:none}.diagram.merman-output.state-output{padding:34px 38px;border:1px solid #494d64a0;background:#1e2030f2;box-shadow:0 18px 55px #0005}.diagram svg{display:block;max-width:none!important;height:auto}.merman-grid{margin:0;color:var(--text);font:13px/1.42 "SFMono-Regular",Menlo,Monaco,monospace;font-variant-ligatures:none;font-feature-settings:"liga" 0,"calt" 0;letter-spacing:0;white-space:pre;tab-size:2;text-rendering:geometricPrecision}.merman-grid [data-style="nodeBorder"],.merman-grid [data-style="databaseBorder"],.merman-grid [data-style="stateBorder"],.merman-grid [data-style="lifeline"],.merman-grid [data-style="spine"],.merman-grid [data-style^="branch"],.merman-grid [data-style^="lifelineRamp"]{color:var(--diagram-muted)}.merman-grid [data-style="edge"],.merman-grid [data-style="transition"]{color:var(--sub)}.merman-grid [data-style="fragment"],.merman-grid [data-style="choice"],.merman-grid [data-style="merge"],.merman-grid [data-style="start"],.merman-grid [data-style="end"],.merman-grid[data-kind="sequence"] [data-style="group"],.merman-grid [data-style="section"]{color:var(--diagram-secondary)}.merman-grid[data-kind="flowchart"] [data-style="group"],.merman-grid [data-style="composite"],.merman-grid [data-style="noteBorder"],.merman-grid [data-style="noteText"],.merman-grid [data-style^="noteConnector"],.merman-grid [data-style="period"],.merman-grid [data-style="highlight"],.merman-grid [data-style="reverse"]{color:var(--blue)}.merman-grid [data-style^="nodeEdgeFade"],.merman-grid [data-style^="databaseEdgeFade"],.merman-grid [data-style^="stateDepartureRamp"],.merman-grid [data-style^="sectionFade"],.merman-grid [data-style^="periodFade"]{color:var(--diagram-secondary)}.merman-grid [data-style="request"],.merman-grid [data-style^="requestFade"]{color:var(--green)}.merman-grid [data-style="response"],.merman-grid [data-style^="responseFade"]{color:var(--yellow)}.merman-grid [data-style="note"],.merman-grid [data-style="noteBadge"]{background:#6e738d24}.merman-grid [data-style="fragmentLabel"]{background:#cad3f514}.empty{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none}.empty[hidden]{display:none}.empty-card{text-align:center;color:var(--overlay)}.empty-icon{width:48px;height:48px;margin:0 auto 12px;border:1px solid var(--surface2);border-radius:15px;display:grid;place-items:center;background:var(--surface);color:var(--mauve);font-size:20px}.empty-card b{display:block;color:var(--sub);font-size:13px}.empty-card span{display:block;margin-top:5px;font-size:11px}.hint{position:absolute;right:14px;bottom:13px;padding:7px 9px;border:1px solid #494d6477;border-radius:8px;background:#181926cc;color:var(--overlay);font-size:9px;pointer-events:none;backdrop-filter:blur(10px)}
+    @media(max-width:850px){.app{grid-template-columns:minmax(270px,42%) minmax(0,1fr)}.toolbar-title span,.hint{display:none}.live{font-size:0}.live::after{content:'↗';font-size:13px}.zoom-value{display:none}}
+  </style>
+</head>
+<body>
+  <div class="app" id="app">
+    <section class="editor-pane">
+      <header class="pane-head"><div class="brand"><span class="mark">M</span><div class="brand-copy"><b>Mermaid Studio</b><span>Live source</span></div></div><button class="sample" id="sampleButton">Example</button></header>
+      <textarea id="source" aria-label="Mermaid source" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+      <footer class="editor-foot" id="status"><i class="status-dot"></i><span id="statusText">Ready</span></footer>
+    </section>
+    <section class="preview-pane">
+      <header class="toolbar">
+        <button class="tool" id="sidebarButton" title="Toggle editor (⌘B)" aria-label="Toggle editor">‹</button>
+        <div class="toolbar-title"><b>Canvas</b><span>Drag to pan, pinch to zoom</span></div>
+        <button class="tool" id="fitButton" title="Fit diagram (⌘0)">Fit</button>
+        <button class="tool" id="minusButton" title="Zoom out (⌘−)">−</button>
+        <span class="zoom-value" id="zoomValue">100%</span>
+        <button class="tool" id="plusButton" title="Zoom in (⌘+)">+</button>
+        <button class="tool" id="actualButton" title="Actual size">1:1</button>
+        <button class="live" id="liveButton">Open in Mermaid Live ↗</button>
+      </header>
+      <div class="stage" id="stage">
+        <div class="scene" id="scene"><div class="diagram" id="diagram"></div></div>
+        <div class="empty" id="empty"><div class="empty-card"><div class="empty-icon">◇</div><b>Your diagram appears here</b><span>Start typing Mermaid syntax on the left.</span></div></div>
+        <div class="hint">Scroll to pan · Pinch to zoom · Double-click to fit</div>
+      </div>
+    </section>
+  </div>
+  <script src="database-renderer.min.js"></script>
+  <script src="merman.min.js"></script>
+  <script src="mermaid.min.js"></script>
+  <script>
+    const starter=`flowchart LR
+  idea([Idea]) --> plan{Plan ready?}
+  plan -- No --> refine[Refine the scope]
+  refine --> plan
+  plan -- Yes --> build[Build]
+  build --> review[Review]
+  review --> ship([Ship])
+
+  classDef start fill:#c6a0f6,stroke:#c6a0f6,color:#181926
+  classDef action fill:#363a4f,stroke:#8aadf4,color:#cad3f5
+  class idea,ship start
+  class refine,build,review action`;
+    const source=document.getElementById('source'),stage=document.getElementById('stage'),scene=document.getElementById('scene'),diagram=document.getElementById('diagram'),empty=document.getElementById('empty'),status=document.getElementById('status'),statusText=document.getElementById('statusText'),zoomValue=document.getElementById('zoomValue');
+    let scale=1,x=0,y=0,drag=null,renderTimer,renderGeneration=0,renderQueue=Promise.resolve(),hasDiagram=false,autoFit=true;
+
+    mermaid.initialize({startOnLoad:false,securityLevel:'strict',theme:'base',flowchart:{htmlLabels:false},themeVariables:{darkMode:true,background:'#24273a',primaryColor:'#363a4f',primaryTextColor:'#cad3f5',primaryBorderColor:'#8aadf4',secondaryColor:'#494d64',secondaryTextColor:'#cad3f5',secondaryBorderColor:'#c6a0f6',tertiaryColor:'#1e2030',tertiaryTextColor:'#cad3f5',tertiaryBorderColor:'#6e738d',lineColor:'#a5adcb',textColor:'#cad3f5',mainBkg:'#363a4f',nodeBorder:'#8aadf4',clusterBkg:'#1e2030',clusterBorder:'#494d64',edgeLabelBackground:'#24273a',fontFamily:'-apple-system, BlinkMacSystemFont, SF Pro Display, sans-serif'}});
+
+    function setStatus(message,isError=false){status.classList.toggle('error',isError);statusText.textContent=message}
+    function setSidebar(collapsed){app.classList.toggle('sidebar-collapsed',collapsed);sidebarButton.textContent=collapsed?'›':'‹';sidebarButton.title=collapsed?'Show editor (⌘B)':'Hide editor (⌘B)';localStorage.setItem('mermaid-sidebar-collapsed',collapsed?'1':'0');setTimeout(()=>{if(autoFit)fit()},200)}
+    function toggleSidebar(){setSidebar(!app.classList.contains('sidebar-collapsed'))}
+    function nativeOpenSource(value){source.value=value;autoFit=true;scheduleRender();source.focus()}
+    function showTextDiagram(text,label,warnings=[],stateOutput=false){const pre=document.createElement('pre');pre.className='merman-grid';pre.textContent=text;diagram.replaceChildren(pre);diagram.classList.add('merman-output');diagram.classList.toggle('state-output',stateOutput);hasDiagram=true;empty.hidden=true;setStatus(warnings.length?`${label} · ${warnings[0]}`:label,warnings.length>0);requestAnimationFrame(()=>{if(autoFit)fit()})}
+    function showStyledDiagram(result){const pre=document.createElement('pre');pre.className='merman-grid';pre.dataset.kind=result.kind;result.lines.forEach((line,lineIndex)=>{line.forEach(run=>{const span=document.createElement('span');if(run.style)span.dataset.style=run.style;span.textContent=run.text;pre.append(span)});if(lineIndex<result.lines.length-1)pre.append('\n')});diagram.replaceChildren(pre);diagram.classList.add('merman-output');diagram.classList.remove('state-output');hasDiagram=true;empty.hidden=true;setStatus(`${result.kind} diagram rendered with Merman colors`);requestAnimationFrame(()=>{if(autoFit)fit()})}
+    function applyTransform(){scene.style.transform=`translate(${x}px,${y}px) scale(${scale})`;zoomValue.textContent=`${Math.round(scale*100)}%`}
+    function clampScale(value){return Math.min(8,Math.max(.08,value))}
+    function zoomAt(next,cx=stage.clientWidth/2,cy=stage.clientHeight/2){const old=scale;scale=clampScale(next);x=cx-(cx-x)*(scale/old);y=cy-(cy-y)*(scale/old);autoFit=false;applyTransform()}
+    function fit(){if(!hasDiagram)return;const bounds=diagram.getBoundingClientRect(),rawWidth=bounds.width/scale,rawHeight=bounds.height/scale,pad=54;scale=clampScale(Math.min((stage.clientWidth-pad*2)/rawWidth,(stage.clientHeight-pad*2)/rawHeight,1.35));x=(stage.clientWidth-rawWidth*scale)/2;y=(stage.clientHeight-rawHeight*scale)/2;autoFit=true;applyTransform()}
+    function actual(){if(!hasDiagram)return;const bounds=diagram.getBoundingClientRect(),rawWidth=bounds.width/scale,rawHeight=bounds.height/scale;scale=1;x=(stage.clientWidth-rawWidth)/2;y=(stage.clientHeight-rawHeight)/2;autoFit=false;applyTransform()}
+
+    async function renderSource(value,generation){
+      const trimmed=value.trim();
+      if(!trimmed){if(generation!==renderGeneration)return;diagram.innerHTML='';hasDiagram=false;empty.hidden=false;setStatus('Waiting for a diagram');return}
+      setStatus('Rendering…');
+      try{
+        let styledResult=null;
+        try{styledResult=window.merman?.render(trimmed)}catch{}
+        if(styledResult){
+          if(generation!==renderGeneration)return;
+          showStyledDiagram(styledResult);return;
+        }
+        const stateResult=window.databaseRenderer?.renderState(trimmed);
+        if(stateResult){
+          if(generation!==renderGeneration)return;
+          showTextDiagram(stateResult.text,'State diagram rendered',stateResult.warnings,true);return;
+        }
+        const textResult=window.databaseRenderer?.isDBML(trimmed)?window.databaseRenderer.renderDBML(trimmed):window.databaseRenderer?.renderMermaid(trimmed);
+        if(textResult){
+          if(generation!==renderGeneration)return;
+          const label=window.databaseRenderer.isDBML(trimmed)?'DBML schema rendered':`${textResult.kind||'Mermaid'} diagram rendered`;
+          showTextDiagram(textResult.text,label,textResult.warnings);return;
+        }
+        const valid=await mermaid.parse(trimmed,{suppressErrors:true});
+        if(!valid)throw new Error('Mermaid could not parse this diagram');
+        const result=await mermaid.render(`mermaid-view-${generation}`,trimmed);
+        if(generation!==renderGeneration)return;
+        diagram.innerHTML=result.svg;diagram.classList.remove('merman-output','state-output');
+        const svg=diagram.querySelector('svg');
+        if(svg){const viewBox=svg.viewBox&&svg.viewBox.baseVal;if(viewBox&&viewBox.width&&viewBox.height){svg.setAttribute('width',viewBox.width);svg.setAttribute('height',viewBox.height)}svg.style.maxWidth='none'}
+        hasDiagram=true;empty.hidden=true;setStatus('Diagram rendered with Mermaid');requestAnimationFrame(()=>{if(autoFit)fit()});
+      }catch(error){if(generation!==renderGeneration)return;setStatus(String(error?.message||error).replace(/^Error:\s*/, '').split('\n')[0],true)}
+    }
+    function scheduleRender(){localStorage.setItem('mermaid-source',source.value);clearTimeout(renderTimer);const generation=++renderGeneration;renderTimer=setTimeout(()=>{const value=source.value;renderQueue=renderQueue.then(()=>renderSource(value,generation)).catch(()=>renderSource(value,generation))},220)}
+
+    source.addEventListener('input',scheduleRender);
+    source.addEventListener('keydown',event=>{if(event.key==='Tab'){event.preventDefault();const start=source.selectionStart,end=source.selectionEnd;source.setRangeText('  ',start,end,'end');scheduleRender()}});
+    stage.addEventListener('pointerdown',event=>{if(event.button!==0)return;drag={id:event.pointerId,startX:event.clientX,startY:event.clientY,x,y};stage.setPointerCapture(event.pointerId);stage.classList.add('dragging');autoFit=false});
+    stage.addEventListener('pointermove',event=>{if(!drag||drag.id!==event.pointerId)return;x=drag.x+event.clientX-drag.startX;y=drag.y+event.clientY-drag.startY;applyTransform()});
+    function endDrag(event){if(!drag||drag.id!==event.pointerId)return;drag=null;stage.classList.remove('dragging')}
+    stage.addEventListener('pointerup',endDrag);stage.addEventListener('pointercancel',endDrag);
+    stage.addEventListener('wheel',event=>{event.preventDefault();const rect=stage.getBoundingClientRect();if(event.ctrlKey||event.metaKey){zoomAt(scale*Math.exp(-event.deltaY*.012),event.clientX-rect.left,event.clientY-rect.top)}else{x-=event.deltaX;y-=event.deltaY;autoFit=false;applyTransform()}},{passive:false});
+    stage.addEventListener('dblclick',fit);
+    document.getElementById('fitButton').addEventListener('click',fit);
+    document.getElementById('sidebarButton').addEventListener('click',toggleSidebar);
+    document.getElementById('minusButton').addEventListener('click',()=>zoomAt(scale/1.2));
+    document.getElementById('plusButton').addEventListener('click',()=>zoomAt(scale*1.2));
+    document.getElementById('actualButton').addEventListener('click',actual);
+    document.getElementById('sampleButton').addEventListener('click',()=>{source.value=starter;autoFit=true;scheduleRender();source.focus()});
+    document.getElementById('liveButton').addEventListener('click',()=>{const value=source.value;const liveSource=window.databaseRenderer?.isDBML(value)?window.databaseRenderer.renderDBML(value).mermaid:value;window.webkit.messageHandlers.bridge.postMessage({action:'openLive',source:liveSource})});
+    window.addEventListener('resize',()=>{if(autoFit)fit()});
+    window.addEventListener('keydown',event=>{if(!event.metaKey)return;if(event.key==='0'){event.preventDefault();fit()}else if(event.key.toLowerCase()==='b'){event.preventDefault();toggleSidebar()}else if(event.key==='+'||event.key==='='){event.preventDefault();zoomAt(scale*1.2)}else if(event.key==='-'){event.preventDefault();zoomAt(scale/1.2)}});
+
+    setSidebar(localStorage.getItem('mermaid-sidebar-collapsed')==='1');
+    source.value=localStorage.getItem('mermaid-source')||starter;
+    scheduleRender();
+  </script>
+</body>
+</html>

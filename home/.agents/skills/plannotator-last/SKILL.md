@@ -2,6 +2,8 @@
 name: plannotator-last
 description: Open Plannotator on the latest rendered assistant message and use the returned annotations to revise that message or continue.
 disable-model-invocation: true
+metadata:
+  opencode/autoinvoke: false
 ---
 
 # Plannotator Last

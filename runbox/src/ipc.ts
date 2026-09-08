@@ -107,6 +107,7 @@ export const requestForward = Effect.fn("Ipc.requestForward")(function* (
     let response = ""
     let settled = false
     let start: ForwardStart | null = null
+    let bufferedBytes = 0
     const finish = (effect: Effect.Effect<DaemonResponse, RunboxError>) => {
       if (settled) return
       settled = true
@@ -122,12 +123,29 @@ export const requestForward = Effect.fn("Ipc.requestForward")(function* (
       }
     })
     socket.on("data", (chunk: string) => {
+      let searchFrom = response.length
       response += chunk
+      bufferedBytes += Buffer.byteLength(chunk)
       while (true) {
-        const newline = response.indexOf("\n")
-        if (newline === -1) return
+        const newline = response.indexOf("\n", searchFrom)
+        if (newline === -1) {
+          if (bufferedBytes > MAX_RESPONSE_FRAME_BYTES) {
+            socket.destroy()
+            finish(Effect.fail(new RunboxError({
+              operation: "read forwarded command response",
+              message: "Forward response exceeds the frame limit before its terminator",
+              code: "INVALID_RESPONSE",
+              suggestion: "Inspect 'runbox logs forward --json' before retrying; startup may have occurred.",
+              retryable: false,
+              details: start === null ? null : JSON.stringify({ ...start, started: true }),
+            })))
+          }
+          return
+        }
         const line = response.slice(0, newline)
         response = response.slice(newline + 1)
+        bufferedBytes -= Buffer.byteLength(line) + 1
+        searchFrom = 0
         if (Buffer.byteLength(line) > MAX_RESPONSE_FRAME_BYTES) {
           socket.destroy()
           finish(Effect.fail(new RunboxError({

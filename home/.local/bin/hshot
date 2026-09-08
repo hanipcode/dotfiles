@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly package="$HOME/.dotfiles/hshot"
+readonly binary="$package/.build/release/hshot"
+
+if [ ! -x "$binary" ]; then
+  printf 'hshot: not built; run ~/.dotfiles/dot tools\n' >&2
+  exit 1
+fi
+
+exec "$binary" "$@"

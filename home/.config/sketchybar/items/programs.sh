@@ -6,7 +6,9 @@ sketchybar --add item programs left \
   --set programs \
     icon=󰀻 \
     icon.color=$ACCENT \
-    label="Programs" \
+    icon.padding_left=10 \
+    icon.padding_right=10 \
+    label.drawing=off \
     background.color=$ITEM_BG \
     background.drawing=on \
     "${POPUP_PROPS[@]}" \

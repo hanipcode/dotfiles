@@ -20,7 +20,7 @@ runbox logs my-project dev --json
 ```
 
 Runbox is personal macOS tooling built with Bun, Effect, `@effect/cli`, OpenTUI
-React, and OpenCode using `openai/gpt-5.6-luna`.
+React, and the stable OpenCode SDK using `openai/gpt-5.6-luna`.
 
 ## Workflow
 
@@ -63,6 +63,12 @@ commands before executing it.
 Forward output is retained in a bounded shared artifact. Each invocation records a
 correlation ID, exact argv, working directory, source commit, output, duration, and
 exit status:
+
+Live streaming uses a bounded queue and waits for socket drain. A slow reader never
+interrupts the child merely because the socket is backpressured. If the queue fills,
+Runbox omits additional live output and returns `FORWARD_LIVE_OUTPUT_TRUNCATED` in
+the final result's warnings; retained logging continues under its normal size limit.
+The start frame and terminal result are never dropped.
 
 ```sh
 runbox logs forward --json
@@ -140,6 +146,14 @@ runner, prepares the revision, and restarts all previously active commands.
 Direct script commands such as `runbox dev` perform this switch automatically;
 `runbox switch` remains useful when no command should be launched.
 
+If checkout, setup, or restarting an active command fails, an ordinary switch stops
+the partial activation and attempts to restore the previous source and complete
+active command set. Recovery reruns repository preparation because failed setup may
+have changed ignored dependencies. A successful recovery still returns the original
+activation error. `SWITCH_ROLLBACK_FAILED` includes both failures; commands are
+stopped and `runbox logs sync --json` retains the recovery evidence. Source worktrees
+are never reset or checked out during recovery.
+
 ## GitHub stacks
 
 With the [`gh-stack`](https://github.com/github/gh-stack) GitHub CLI extension
@@ -173,6 +187,10 @@ Project-owned prompts are Markdown or plain text:
 Luna may install dependencies, clean up stale processes, and create ignored or
 generated environment state, but it is told never to guess credentials or replace
 synchronized values. Runbox rejects tracked and non-ignored source changes.
+The preparation guard fingerprints protected file contents, modes, symlink targets,
+and the Git index, including already-dirty and untracked overlay files. Verification
+runs after success, failure, timeout, and cancellation; merely preserving Git status
+is not sufficient.
 Each command loads `.env` and `.env.local` from every ancestor directory containing
 a `package.json`, from the repository root through the selected package. Nearer
 packages override their ancestors, and the invoking shell takes final precedence.
@@ -189,6 +207,37 @@ in-place spinner with elapsed time in interactive commands. Preparation is termi
 after five minutes by
 default; set `RUNBOX_AGENT_TIMEOUT_MS` to a positive millisecond value to override it.
 
+### Command readiness
+
+`running` means the process survived the startup grace period, not that the app can
+serve requests. Configure an optional readiness check per script in the selected
+package's `package.json`:
+
+```json
+{
+  "runbox": {
+    "readiness": {
+      "dev": { "type": "http", "url": "http://127.0.0.1:3000/health", "timeoutMs": 30000 },
+      "worker": { "type": "log", "text": "Worker ready" },
+      "database": { "type": "tcp", "host": "127.0.0.1", "port": 5432 }
+    }
+  }
+}
+```
+
+HTTP checks require a 2xx response. TCP checks default to `127.0.0.1`. Log checks
+match literal text from the current process, never a previous run's retained logs.
+The probe deadline defaults to 30 seconds, accepts 1–600000 milliseconds, and starts
+after the startup grace period. A failed check stops the command and records
+`READINESS_TIMEOUT` or `READINESS_COMMAND_EXITED`.
+
+Use `runbox dev --wait-ready --no-tui --json` (also supported by `run` and `stack`)
+to wait for readiness instead of just process startup. `--wait-ready` requires a
+configured check and uses noninteractive output. Ordinary launches keep their
+existing process-start behavior; switching existing commands waits for their
+configured checks. Status JSON and the dashboard show `readiness` separately as
+`not-configured`, `waiting`, `ready`, or `failed`.
+
 Successful preparation is keyed by a fingerprint of tracked setup inputs. Matching
 fingerprints skip OpenCode entirely. Changed setups receive two local, append-only
 memory files under the repository's Runbox state directory:
@@ -203,6 +252,13 @@ timings, status, output hashes, and bounded redacted previews. Instructions are 
 folded living document: later records correct or remove earlier keys without
 rewriting history. Inspect them with `runbox logs history --json` and
 `runbox logs instructions --json` (or include a global project selector first).
+
+Preparation success lookups use a daemon-local index, and instructions use a folded
+snapshot. They are updated on append and rebuilt from JSONL after daemon restart or
+external file changes. Before appending after an interrupted write, Runbox preserves
+the incomplete tail in a private `.partial-<id>` sibling file, then truncates only
+that tail. Complete records remain untouched; malformed complete records still fail
+visibly instead of being silently removed.
 
 ## Agent usage
 
@@ -248,6 +304,11 @@ neither source could be restored safely; inspect `runbox logs sync --json` befor
 retrying.
 
 Failures exit non-zero and include a stable code plus the next action:
+
+Background startup failures retain the same structured error in the command's
+`failure` field, so launch results, status, and the dashboard preserve the original
+code, suggestion, retryability, and details. Older records without that field use
+the generic command-failure fallback.
 
 ```json
 {

@@ -13,8 +13,10 @@ import { StorageMigration } from "./services/StorageMigration.ts"
 import { PreparationMemory } from "./services/PreparationMemory.ts"
 import { RepositoryCatalog } from "./services/RepositoryCatalog.ts"
 import { RunboxApplication } from "./application/RunboxApplication.ts"
+import { OpenCode } from "./services/OpenCode.ts"
+import { Readiness } from "./services/Readiness.ts"
 
-const InfrastructureLayer = Layer.mergeAll(Shell.layer, Paths.layer, LogStore.layer)
+const InfrastructureLayer = Layer.mergeAll(Shell.layer, Paths.layer, LogStore.layer, OpenCode.layer)
 const MemoryLayer = PreparationMemory.layer.pipe(Layer.provideMerge(InfrastructureLayer))
 
 export const CoreLayer = Layer.mergeAll(
@@ -26,6 +28,7 @@ export const CoreLayer = Layer.mergeAll(
   GhStack.layer,
   Registry.layer,
   StorageMigration.layer,
+  Readiness.layer,
 ).pipe(Layer.provideMerge(MemoryLayer))
 
 const CatalogLayer = RepositoryCatalog.layer.pipe(Layer.provideMerge(CoreLayer))

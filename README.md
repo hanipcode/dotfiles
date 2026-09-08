@@ -9,7 +9,7 @@ git clone <this> ~/.dotfiles && cd ~/.dotfiles
 ./dot brew          # install packages
 ./dot stow          # symlink home/ into $HOME
 ./dot plugins       # link herdr plugins
-./dot tools         # install and link personal CLIs (runbox, hanif-agent)
+./dot tools         # install and link personal CLIs (runbox, hanif-agent, hshot)
 ./dot doctor        # verify
 ```
 
@@ -50,28 +50,63 @@ home/                        stowed to $HOME
   .claude/settings.json      Claude settings
   .claude/skills/            compatibility links into .agents/skills
   skills-lock.json           Skills CLI project lock (tracked, not stowed)
-  .local/bin/                tmux-sessionizer, tmux-windowizer (ssh fallback)
+  .local/bin/                dilc, dilw, tmux-sessionizer, tmux-windowizer
   .tmux.conf .zshrc .zshenv
 heherdr/                     herdr plugin source — NOT stowed, see below
 runbox/                      Git-aware managed runner for agent worktrees
 hanif-agent/                 reusable agent workflow CLI (adversarial review first)
+hshot/                       native macOS window screenshot CLI
+oxlint-rules/                dependency-free lint plugins copied into projects
 ```
+
+## Window screenshots
+
+`hshot` captures a window with ScreenCaptureKit without focusing, raising, or moving
+it. Window IDs match AeroSpace, and every command emits JSON for scripts and agents:
+
+```sh
+hshot permissions --request
+hshot list --workspace D --pretty
+hshot capture --id 432 -o /tmp/chrome.png
+hshot capture --focused | jq -r .path
+```
+
+Run `./dot tools` to build the native executable. macOS grants Screen Recording
+permission to the terminal or agent host that launches it.
 
 ## Agent workflows
 
 `hanif-agent` is the standalone home for reusable agent workflows. Its first
 command reviews the current branch plus staged, unstaged, and untracked changes
-through independent Luna reviewers and two Sol adjudication passes:
+through four parallel Luna specialists and a concurrent independent Astra review,
+followed by Astra reconciliation:
 
 ```sh
 hanif-agent review
 hanif-agent review --base main
+hanif-agent review-worktree
+hanif-agent review-lc
 ```
+
+Use `--json --progress json` for headless agent execution; incomplete reviews exit
+`2` rather than appearing successful. `review-preflight`, `review-status`,
+`review-result`, and `review-retry` support setup checks, inspection, and compatible
+checkpoint recovery. See `hanif-agent/README.md` for the result contract.
 
 Review history is an expendable, repository- and branch-scoped cache under
 `/tmp/agentic-review`. Successful reviews also place a paste-ready Markdown report
-on the macOS clipboard. Run `./dot tools` after cloning to install dependencies and
+on the macOS clipboard in interactive mode only. Run `./dot tools` after cloning to install dependencies and
 expose the CLI through Bun's global link.
+
+## Commit comparison
+
+`dilc` opens the latest commit diff in DiffDash. `dilw` lists earlier commits
+with `fzf`, then opens the selected commit diff:
+
+```sh
+dilc
+dilw
+```
 
 ## Agent skills
 

@@ -10,7 +10,7 @@ const patch = (path: string, lines: number, width = 48): string => [
 ].join("\n")
 
 describe("semantic review units", () => {
-  it("keeps a bounded change in one Luna unit", () => {
+  it("keeps a bounded change in one navigation unit", () => {
     const units = planReviewUnits([
       { path: "src/cart/cart.ts", patch: patch("src/cart/cart.ts", 20) },
       { path: "src/cart/cart.test.ts", patch: patch("src/cart/cart.test.ts", 20) },
@@ -34,19 +34,19 @@ describe("semantic review units", () => {
 
     expect(units.length).toBeGreaterThan(1)
     expect([...new Set(units.flatMap((unit) => unit.paths))].sort()).toEqual(files.map((file) => file.path).sort())
-    expect(units.every((unit) => unit.patchLines <= 4_000)).toBe(true)
-    expect(units.every((unit) => unit.patchBytes <= 160 * 1_024)).toBe(true)
-    expect(units.every((unit) => unit.paths.length <= 40)).toBe(true)
+    expect(units.every((unit) => unit.patchLines <= 1_200)).toBe(true)
+    expect(units.every((unit) => unit.patchBytes <= 64 * 1_024)).toBe(true)
+    expect(units.every((unit) => unit.paths.length <= 12)).toBe(true)
   })
 
   it("keeps a source file with its test when the family fits", () => {
     const files = [
-      { path: "packages/core/src/orders/order.ts", patch: patch("packages/core/src/orders/order.ts", 800) },
+      { path: "packages/core/src/orders/order.ts", patch: patch("packages/core/src/orders/order.ts", 400) },
       {
         path: "packages/core/tests/orders/order.test.ts",
-        patch: patch("packages/core/tests/orders/order.test.ts", 800),
+        patch: patch("packages/core/tests/orders/order.test.ts", 400),
       },
-      { path: "packages/ui/src/shell/app.tsx", patch: patch("packages/ui/src/shell/app.tsx", 3_000) },
+      { path: "packages/ui/src/shell/app.tsx", patch: patch("packages/ui/src/shell/app.tsx", 1_500) },
     ]
     const units = planReviewUnits(files)
     const orderUnit = units.find((unit) => unit.paths.includes("packages/core/src/orders/order.ts"))
@@ -56,7 +56,7 @@ describe("semantic review units", () => {
 
   it("repeats file and hunk context when one hunk must be split", () => {
     const path = "packages/core/src/large.ts"
-    const units = planReviewUnits([{ path, patch: patch(path, 7_000) }])
+    const units = planReviewUnits([{ path, patch: patch(path, 3_000) }])
 
     expect(units.length).toBeGreaterThan(1)
     expect(units.every((unit) => unit.patch.startsWith(`diff --git a/${path} b/${path}`))).toBe(true)
@@ -65,9 +65,40 @@ describe("semantic review units", () => {
 
   it("bounds one oversized added line", () => {
     const path = "packages/core/src/embedded-data.ts"
-    const units = planReviewUnits([{ path, patch: patch(path, 1, 200_000) }])
+    const units = planReviewUnits([{ path, patch: patch(path, 1, 100_000) }])
 
     expect(units.length).toBeGreaterThan(1)
-    expect(units.every((unit) => unit.patchBytes <= 160 * 1_024)).toBe(true)
+    expect(units.every((unit) => unit.patchBytes <= 64 * 1_024)).toBe(true)
+  })
+
+  it("keeps a bounded eight-file cross-package change in one navigation unit", () => {
+    const paths = [
+      "packages/core/application/src/checkouts/checkout-service.ts",
+      "packages/core/domain/src/catalog/product.test.ts",
+      "packages/core/domain/src/catalog/product.ts",
+      "packages/core/domain/src/entitlements/access-grant.test.ts",
+      "packages/core/storage/src/testing/storage-contract.ts",
+      "packages/spa/src/index.test.ts",
+      "packages/storage-d1/src/storage.integration.test.ts",
+      "packages/storage-d1/src/storage.ts",
+    ]
+    const units = planReviewUnits(paths.map((path) => ({ path, patch: patch(path, 20) })))
+
+    expect(units).toHaveLength(1)
+    expect(units[0]).toMatchObject({
+      label: "complete change",
+      paths: [...paths].sort(),
+    })
+  })
+
+  it("splits an over-limit cross-package change into bounded units", () => {
+    const units = planReviewUnits([
+      { path: "packages/core/src/lifecycle.ts", patch: patch("packages/core/src/lifecycle.ts", 700) },
+      { path: "packages/core-rpc/src/lifecycle.ts", patch: patch("packages/core-rpc/src/lifecycle.ts", 700) },
+    ])
+
+    expect(units.length).toBeGreaterThan(1)
+    expect(units.every((unit) => unit.patchLines <= 1_200)).toBe(true)
+    expect(units.every((unit) => unit.patchBytes <= 64 * 1_024)).toBe(true)
   })
 })

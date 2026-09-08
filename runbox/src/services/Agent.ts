@@ -1,10 +1,13 @@
 import { Context, Effect, Layer, Schema } from "effect"
 import { appendFile, readFile } from "node:fs/promises"
 import { join } from "node:path"
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
+import { lstat, readlink } from "node:fs/promises"
+import { createReadStream } from "node:fs"
 import type { RepoState } from "../domain.ts"
 import { AgentMutation, RunboxError } from "../errors.ts"
 import { LogStore } from "./LogStore.ts"
+import { OpenCode, type OpenCodeRecord } from "./OpenCode.ts"
 import {
   AgentMemoryResponse,
   outputSummary,
@@ -34,70 +37,32 @@ const stripCodeFence = (value: string): string => {
 }
 
 export const parseAgentMemoryResponse = (output: string): AgentMemoryResponse | null => {
-  const texts = output.split("\n").flatMap((line) => {
-    try {
-      const value = JSON.parse(line) as { readonly type?: unknown; readonly part?: { readonly text?: unknown } }
-      return value.type === "text" && typeof value.part?.text === "string" ? [value.part.text] : []
-    } catch {
-      return []
-    }
-  })
-  for (const text of texts.reverse()) {
-    try {
-      return Schema.decodeUnknownSync(AgentMemoryResponse)(JSON.parse(stripCodeFence(text)))
-    } catch {
-      // Commentary text and older agents are not structured memory responses.
-    }
+  try {
+    return Schema.decodeUnknownSync(AgentMemoryResponse)(JSON.parse(stripCodeFence(output)))
+  } catch {
+    return null
   }
-  return null
 }
 
 export const toolHistoryRecords = (
-  output: string,
+  records: ReadonlyArray<OpenCodeRecord>,
   runId: string,
-): ReadonlyArray<Readonly<Record<string, unknown>>> => output.split("\n").flatMap((line) => {
-  let value: {
-    readonly type?: unknown
-    readonly timestamp?: unknown
-    readonly sessionID?: unknown
-    readonly part?: {
-      readonly tool?: unknown
-      readonly callID?: unknown
-      readonly state?: {
-        readonly status?: unknown
-        readonly input?: unknown
-        readonly output?: unknown
-        readonly metadata?: { readonly exit?: unknown }
-        readonly time?: { readonly start?: unknown; readonly end?: unknown }
-      }
-    }
-  }
-  try {
-    value = JSON.parse(line)
-  } catch {
-    return []
-  }
-  if (value.type !== "tool_use" || typeof value.part?.tool !== "string") return []
-  const state = value.part.state
-  const renderedOutput = typeof state?.output === "string"
-    ? state.output
-    : state?.output === undefined ? "" : JSON.stringify(state.output)
-  const summary = outputSummary(renderedOutput)
-  const startedAt = typeof state?.time?.start === "number" ? state.time.start : null
-  const endedAt = typeof state?.time?.end === "number" ? state.time.end : null
+): ReadonlyArray<Readonly<Record<string, unknown>>> => records.flatMap((record) => {
+  if (record.type !== "tool") return []
+  const summary = outputSummary(record.output)
   return [{
     kind: "tool",
-    at: typeof value.timestamp === "number" ? value.timestamp : Date.now(),
+    at: record.endedAt ?? record.startedAt ?? Date.now(),
     runId,
-    sessionId: typeof value.sessionID === "string" ? value.sessionID : null,
-    callId: typeof value.part.callID === "string" ? value.part.callID : null,
-    tool: value.part.tool,
-    input: sanitizeUnknown(state?.input ?? null),
-    status: typeof state?.status === "string" ? state.status : "unknown",
-    startedAt,
-    endedAt,
-    durationMs: startedAt !== null && endedAt !== null ? endedAt - startedAt : null,
-    exitCode: typeof state?.metadata?.exit === "number" ? state.metadata.exit : null,
+    sessionId: record.sessionId,
+    callId: record.callId,
+    tool: record.tool,
+    input: sanitizeUnknown(record.input),
+    status: record.status,
+    startedAt: record.startedAt,
+    endedAt: record.endedAt,
+    durationMs: record.startedAt !== null && record.endedAt !== null ? record.endedAt - record.startedAt : null,
+    exitCode: record.exitCode,
     outputHash: summary.hash,
     outputPreview: summary.preview,
     outputTruncated: summary.truncated,
@@ -116,6 +81,7 @@ export class Agent extends Context.Tag("@runbox/Agent")<
       const shell = yield* Shell
       const logs = yield* LogStore
       const memory = yield* PreparationMemory
+      const openCode = yield* OpenCode
 
       const gitSnapshot = Effect.fn("Agent.gitSnapshot")(function* (runnerPath: string) {
         const head = yield* shell.run(["git", "rev-parse", "HEAD"], { cwd: runnerPath }).pipe(
@@ -139,10 +105,44 @@ export class Agent extends Context.Tag("@runbox/Agent")<
             new RunboxError({ operation: "inspect runner status", message: error.stderr }),
           ),
         )
+        const index = yield* shell.run(["git", "ls-files", "--stage", "-z"], {
+          cwd: runnerPath,
+          captureBytes: 16 * 1024 * 1024,
+        }).pipe(Effect.mapError((error) => new RunboxError({ operation: "inspect protected index", message: error.stderr })))
+        const files = yield* shell.run(["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"], {
+          cwd: runnerPath,
+          captureBytes: 16 * 1024 * 1024,
+        }).pipe(Effect.mapError((error) => new RunboxError({ operation: "inspect protected files", message: error.stderr })))
+        const fingerprint = yield* Effect.tryPromise({
+          try: async () => {
+            // Fail closed rather than compare a truncated Git listing.
+            if (Buffer.byteLength(index.stdout) >= 16 * 1024 * 1024 || Buffer.byteLength(files.stdout) >= 16 * 1024 * 1024) {
+              throw new Error("Protected file listing exceeds the inspection limit")
+            }
+            const hash = createHash("sha256").update(index.stdout)
+            for (const path of [...new Set(files.stdout.split("\0").filter(Boolean))].sort()) {
+              const absolute = join(runnerPath, path)
+              const stat = await lstat(absolute).catch((cause: NodeJS.ErrnoException) => {
+                if (cause.code === "ENOENT") return null
+                throw cause
+              })
+              hash.update(JSON.stringify([path, stat?.mode ?? null]))
+              if (stat?.isSymbolicLink()) hash.update(await readlink(absolute))
+              else if (stat?.isFile()) {
+                const content = createHash("sha256")
+                for await (const chunk of createReadStream(absolute)) content.update(chunk)
+                hash.update(content.digest())
+              }
+            }
+            return hash.digest("hex")
+          },
+          catch: (cause) => new RunboxError({ operation: "fingerprint protected runner files", message: String(cause) }),
+        })
         return {
           head: head.stdout.trim(),
           config: config.stdout.trim(),
           status: status.stdout.trim(),
+          fingerprint,
         }
       })
 
@@ -163,8 +163,21 @@ export class Agent extends Context.Tag("@runbox/Agent")<
           script: request.script,
           startedAt: Date.now(),
         }
-        let capturedOutput = ""
+        let capturedRecords: ReadonlyArray<OpenCodeRecord> = []
+        const verifyProtectedState = Effect.gen(function* () {
+          const after = yield* gitSnapshot(request.state.runnerPath)
+          if (after.head !== before.head) {
+            return yield* new AgentMutation({ summary: `OpenCode changed runner HEAD from ${before.head} to ${after.head}` })
+          }
+          if (after.config !== before.config) {
+            return yield* new AgentMutation({ summary: "OpenCode changed repository config" })
+          }
+          if (after.status !== before.status || after.fingerprint !== before.fingerprint) {
+            return yield* new AgentMutation({ summary: "OpenCode changed protected runner file contents, modes, symlinks, or index" })
+          }
+        })
         let toolsRecorded = false
+        let failureRecorded = false
         const appendRun = (phase: "started" | "succeeded" | "failed", message: string | null) =>
           memory.appendHistory(run.repoId, {
             kind: "run",
@@ -178,11 +191,11 @@ export class Agent extends Context.Tag("@runbox/Agent")<
             script: run.script,
             durationMs: Date.now() - run.startedAt,
             message,
-          })
+          }).pipe(Effect.tap(() => Effect.sync(() => { if (phase === "failed") failureRecorded = true })))
         const appendTools = Effect.fn("Agent.appendToolHistory")(function* () {
           if (toolsRecorded) return
           toolsRecorded = true
-          for (const record of toolHistoryRecords(capturedOutput, run.runId)) {
+          for (const record of toolHistoryRecords(capturedRecords, run.runId)) {
             yield* memory.appendHistory(run.repoId, record)
           }
         })
@@ -231,32 +244,19 @@ export class Agent extends Context.Tag("@runbox/Agent")<
             "Finish with exactly one JSON object and no Markdown fence. Schema: {\"summary\":string,\"instructionChanges\":[{\"key\":string,\"status\":\"active\"|\"removed\",\"instruction\":string|null,\"reason\":string,\"evidence\":string[]}]}. Emit only new, corrected, or removed instructions. Never include credentials or environment values.",
           ].filter(Boolean).join("\n\n")
           yield* logs.append(request.logFile, `\n[runbox] asking GPT-5.6 Luna to prepare the runner\n`)
-          const executable = process.env.RUNBOX_OPENCODE_BIN ?? "opencode"
-          const output = yield* shell.run(
-          [
-            executable,
-            "run",
-            "-m",
-            "openai/gpt-5.6-luna",
-            "--format",
-            "json",
-            "--auto",
-            "--dir",
-            packageDir,
+          const output = yield* Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
+            const outcome = yield* restore(openCode.run({
+            directory: packageDir,
+            model: "openai/gpt-5.6-luna",
             prompt,
-          ],
-          {
-            cwd: packageDir,
-            allowFailure: true,
-            timeoutMs,
-            onStdout: (chunk) => {
-              capturedOutput += chunk
-              void appendFile(request.logFile, sanitizeText(chunk)).catch(() => undefined)
+            onRecord: (record) => {
+              const text = record.type === "text"
+                ? sanitizeText(record.text)
+                : `[Luna] ${record.tool} ${record.status}\n`
+              void appendFile(request.logFile, text).catch(() => undefined)
             },
-            onStderr: (chunk) => { void appendFile(request.logFile, sanitizeText(chunk)).catch(() => undefined) },
-          },
-        ).pipe(
-          Effect.timeoutFail({
+          }).pipe(
+            Effect.timeoutFail({
             duration: `${timeoutMs} millis`,
             onTimeout: () => new RunboxError({
               operation: "prepare runner",
@@ -267,46 +267,19 @@ export class Agent extends Context.Tag("@runbox/Agent")<
               details: request.logFile,
             }),
           }),
-          Effect.mapError((error) =>
-            error instanceof RunboxError
-              ? error
-              : new RunboxError({
-                  operation: "launch OpenCode",
-                  message: error.stderr,
-                  code: error.stderr.includes("timed out") ? "PREPARATION_TIMEOUT" : "PREPARATION_FAILED",
-                  suggestion: "Inspect 'runbox logs setup --json', then retry.",
-                  retryable: true,
-                  details: request.logFile,
-                }),
-          ),
-          )
+            )).pipe(Effect.exit)
+            // Verify even when setup failed, timed out, or was interrupted. Mutation takes precedence.
+            yield* verifyProtectedState.pipe(Effect.tapError((error) =>
+              appendRun("failed", error._tag === "AgentMutation" ? error.summary : error.message)
+            ))
+            return yield* outcome
+          }))
+          capturedRecords = output.records
           yield* appendTools()
-          yield* logs.append(request.logFile, `\n[runbox] OpenCode preparation exited with ${output.exitCode}\n`)
-          const after = yield* gitSnapshot(request.state.runnerPath)
-          if (after.head !== before.head) {
-            return yield* new AgentMutation({
-              summary: `OpenCode changed runner HEAD from ${before.head} to ${after.head}`,
-            })
-          }
-          if (after.config !== before.config) {
-            return yield* new AgentMutation({
-              summary: "OpenCode changed repository config",
-            })
-          }
-          if (after.status !== before.status) {
-            return yield* new AgentMutation({
-              summary: after.status === ""
-                ? `OpenCode changed runner status from ${before.status}`
-                : after.status,
-            })
-          }
-          if (output.exitCode !== 0) {
-            return yield* new RunboxError({
-              operation: "prepare runner",
-              message: `OpenCode exited with ${output.exitCode}`,
-            })
-          }
-          const response = parseAgentMemoryResponse(output.stdout)
+          yield* logs.append(request.logFile, `\n[runbox] OpenCode preparation completed\n`)
+          const response = parseAgentMemoryResponse(
+            output.records.flatMap((record) => record.type === "text" ? [record.text] : []).join("\n"),
+          )
           if (response === null) {
             yield* memory.appendHistory(run.repoId, {
               kind: "memory-warning",
@@ -322,7 +295,7 @@ export class Agent extends Context.Tag("@runbox/Agent")<
 
         return yield* execution.pipe(
           Effect.tapError((error) => appendTools().pipe(
-            Effect.zipRight(appendRun("failed", error instanceof Error ? error.message : String(error))),
+            Effect.zipRight(failureRecorded ? Effect.void : appendRun("failed", error instanceof Error ? error.message : String(error))),
             Effect.catchAll(() => Effect.void),
           )),
         )

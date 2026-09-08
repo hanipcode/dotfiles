@@ -3,7 +3,17 @@ name: code-review
 description: Review the changes since a fixed point (commit, branch, tag, or merge-base) along two axes — Standards (does the code follow this repo's documented coding standards?) and Spec (does the code match what the originating issue/PRD asked for?). Runs both reviews in parallel sub-agents and reports them side by side. Use when the user wants to review a branch, a PR, work-in-progress changes, or asks to "review since X".
 ---
 
-Two-axis review of the diff between `HEAD` and a fixed point the user supplies:
+For a Luna/Astra, effect-slopcop, or `hanif-agent` review, load
+[`hanif-agent-review`](../hanif-agent-review/SKILL.md) and use its CLI workflow
+instead of spawning the two reviewers below when only that review is requested.
+When both are requested, run both independently; neither substitutes for the other.
+It also owns run inspection and retry.
+
+Follow [the one-pass review and human-disposition policy](REVIEW-HANDOFF.md) for
+findings, approval, and post-fix verification. Run each requested review once;
+additional runs require an explicit human decision.
+
+Otherwise, this skill performs a two-axis review of the diff between `HEAD` and a fixed point the user supplies:
 
 - **Standards** — does the code conform to this repo's documented coding standards?
 - **Spec** — does the code faithfully implement the originating issue / PRD / spec?
@@ -19,6 +29,12 @@ The issue tracker should have been provided to you — run `/setup-matt-pocock-s
 Whatever the user said is the fixed point — a commit SHA, branch name, tag, `main`, `HEAD~5`, etc. If they didn't specify one, ask for it.
 
 Capture the diff command once: `git diff <fixed-point>...HEAD` (three-dot, so the comparison is against the merge-base). Also note the list of commits via `git log <fixed-point>..HEAD --oneline`.
+
+For work-in-progress or pre-commit review, include the effective worktree instead:
+resolve the merge-base, capture `git diff <merge-base>` for tracked changes, and
+include the inventory and contents from `git ls-files --others --exclude-standard`.
+An empty committed diff does not mean an empty effective diff. Record the exact
+scope and freeze edits during review; give both reviewers the same snapshot.
 
 Before going further, confirm the fixed point resolves (`git rev-parse <fixed-point>`) and the diff is non-empty. A bad ref or empty diff should fail here — not inside two parallel sub-agents.
 
@@ -59,6 +75,8 @@ Each smell reads *what it is* → *how to fix*; match it against the diff:
 
 Send a single message with two `Agent` tool calls. Use the `general-purpose` subagent for both.
 
+Add this guardrail to both prompts: "Complete the review directly using your own context and tools. Do not spawn or delegate to additional sub-agents."
+
 **Standards sub-agent prompt** — include:
 
 - The full diff command and commit list.
@@ -78,6 +96,10 @@ If the spec is missing, skip the Spec sub-agent and note this in the final repor
 Present the two reports under `## Standards` and `## Spec` headings, verbatim or lightly cleaned. Do **not** merge or rerank findings — the two axes are deliberately separate (see _Why two axes_).
 
 End with a one-line summary: total findings per axis, and the worst issue _within each axis_ (if any). Don't pick a single winner across axes — that's the reranking the separation exists to prevent.
+
+Then append the human-disposition handoff from `REVIEW-HANDOFF.md`, preserving all
+findings and axis attribution. Wait for approval before fixes; after approved fixes,
+verify with focused checks rather than automatically launching reviewers again.
 
 ## Why two axes
 

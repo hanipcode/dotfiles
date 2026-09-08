@@ -4,10 +4,20 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import type { ProjectContext } from "../src/domain.ts"
+import { CommandRecord, RepoState, stateRevision } from "../src/domain.ts"
 import { Paths } from "../src/services/Paths.ts"
 import { decodeState, StateStore } from "../src/services/StateStore.ts"
 
 describe("StateStore", () => {
+  it.effect("preserves action revisions across decoding with readiness and failure fields", () => Effect.gen(function* () {
+    const record = CommandRecord.make({ id: ".:dev", packagePath: "", script: "dev", args: [], status: "failed", pid: null, startedAt: null, exitCode: 1, message: "failed", logFile: "/logs/dev" })
+    const state = RepoState.make({ version: 2, repoId: "repo", repoRoot: "/repo", commonDir: "/repo/.git", runnerPath: "/runner", source: null, preparedCommits: [], commands: {
+      ".:dev": { ...record, readiness: "failed", failure: { details: null, retryable: true, suggestion: "inspect logs", operation: "prepare runner", message: "deadline exceeded", code: "PREPARATION_TIMEOUT" } },
+    } })
+    const decoded = yield* decodeState(JSON.stringify(state), "/state.json")
+    expect(stateRevision(decoded)).toBe(stateRevision(state))
+    expect(stateRevision({ ...decoded, source: { kind: "worktree", worktreePath: "/repo", branch: "main", commit: "abc", stack: null } })).not.toBe(stateRevision(state))
+  }))
   it.effect("defaults the environment source for existing version two state", () =>
     Effect.gen(function* () {
       const state = yield* decodeState(JSON.stringify({

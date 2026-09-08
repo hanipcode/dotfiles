@@ -113,7 +113,7 @@ export const ensureDaemon = Effect.fn("Client.ensureDaemon")(function* (
       await mkdir(dirname(daemonLog), { recursive: true })
       const handle = await open(daemonLog, "a")
       const entrypoint = fileURLToPath(new URL("../bin/daemon.ts", import.meta.url))
-      const child = spawn(process.execPath, [entrypoint, project.repoRoot], {
+      const child = spawn(process.execPath, [entrypoint, project.packageDir], {
         detached: true,
         stdio: ["ignore", handle.fd, handle.fd],
         env: process.env,

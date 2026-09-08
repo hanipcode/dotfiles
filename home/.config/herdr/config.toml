@@ -1,7 +1,7 @@
 # herdr — configured to feel like the tmux setup it replaces.
 #
 # Model mapping from the old tmux workflow:
-#   tmux session  -> herdr workspace   (one per project, ctrl+1..9 to switch)
+#   tmux session  -> herdr workspace   (one per project)
 #   tmux window   -> herdr tab         (prefix+1..9 within a project)
 #   tmux pane     -> herdr pane
 # Everything lives in ONE herdr session so the sidebar shows every project at once.
@@ -68,11 +68,13 @@ directory = "~/.herdr/worktrees"
 prefix = "ctrl+a"
 
 # --- projects (was: tmux sessions) ---
-# Direct chord, no prefix — ctrl+1..9 jumps straight to a project. This relies
+# Direct chord, no prefix — ctrl+1..9 jumps to the numbered priority/inbox agent
+# rows. This relies
 # on the Kitty keyboard protocol, which Ghostty implements; ctrl+digit is
 # unrepresentable in legacy terminal encoding, so it will NOT work over ssh
-# from a legacy terminal. Fall back to prefix+w there.
-switch_workspace = "ctrl+1..9"
+# from a legacy terminal.
+switch_workspace = ""
+focus_agent = "ctrl+1..9"
 workspace_picker = "prefix+w"     # fuzzy-navigate OPEN projects
 new_workspace = "prefix+shift+n"
 rename_workspace = "prefix+shift+w"
@@ -83,6 +85,8 @@ close_workspace = "prefix+shift+d"
 # which is what made worktree management feel missing.
 new_worktree = "prefix+shift+g"
 remove_worktree = "prefix+shift+u"
+# prefix+shift+j/k are custom commands below. They wrap within the current
+# project's open main/worktree workspaces without crossing into another project.
 # Native open_worktree is REPLACED by the heherdr overlay on prefix+o below —
 # its modal is filter-first, so bare j/k types into the filter instead of
 # moving. Set it back to "prefix+shift+o" to get herdr's own overlay again.
@@ -101,8 +105,11 @@ close_tab = "prefix+shift+x"
 focus_pane_left = "prefix+h"
 focus_pane_down = "prefix+j"
 focus_pane_up = "prefix+k"
-focus_pane_right = "prefix+l"
+focus_pane_right = ""
 last_pane = "prefix+semicolon"    # tmux: prefix+; last pane
+# prefix+shift+j/k are used above for workspace/worktree cycling.
+swap_pane_down = ""
+swap_pane_up = ""
 # tmux's % and " are the primary bindings; herdr's own defaults kept as aliases.
 # Naming matches tmux's semantics: "vertical" = vertical divider = side by side.
 #   prefix+%  -> panes side by side (tmux: split-window -h)
@@ -160,6 +167,30 @@ type = "plugin_action"
 command = "heherdr.stack"
 description = "navigate current gh-stack"
 
+[[keys.command]]
+key = "prefix+shift+j"
+type = "shell"
+command = 'bun run "$HOME/.dotfiles/heherdr/bin/cycle-worktree.ts" next'
+description = "next workspace in current worktree group"
+
+[[keys.command]]
+key = "prefix+shift+k"
+type = "shell"
+command = 'bun run "$HOME/.dotfiles/heherdr/bin/cycle-worktree.ts" previous'
+description = "previous workspace in current worktree group"
+
+[[keys.command]]
+key = "prefix+l"
+type = "plugin_action"
+command = "heherdr.run"
+description = "open terminal in current worktree"
+
+[[keys.command]]
+key = "prefix+shift+l"
+type = "plugin_action"
+command = "heherdr.run-worktree"
+description = "select worktree and open terminal"
+
 # --- vim-aware ctrl+h/j/k/l (replaces vim-tmux-navigator) ---
 # Forwards the chord into nvim when the focused pane runs vim/nvim, otherwise
 # moves herdr's pane focus. Editor side lives in
@@ -211,8 +242,9 @@ prompt_new_workspace_name = true
 # exists, and plugin v1 explicitly cannot render sidebar UI. "priority" at
 # least turns it into an attention queue (needs-input and finished float to the
 # top) instead of a flat roster of every project.
-agent_panel_sort = "spaces"
+agent_panel_sort = "priority"
 
+status_indicators = "dots"
 [ui.sidebar.spaces]
 # Carry the signal in the SPACES list so the global agents list matters less.
 # state_icon is the space's rolled-up agent state across all its panes — the
@@ -235,7 +267,7 @@ rows = [
 [ui.toast]
 # Reaches you even when Ghostty is unfocused or you're on another aerospace
 # workspace, which is what helpers/agent_hook.sh used to do.
-delivery = "terminal"
+delivery = "herdr"
 # Only fire if the pane is STILL finished/needs-input after this long, so an
 # agent that pauses for a second doesn't spam Notification Center.
 delay_seconds = 2

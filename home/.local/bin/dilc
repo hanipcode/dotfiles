@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+for dependency in git diffdash; do
+  if ! command -v "$dependency" >/dev/null 2>&1; then
+    printf 'dilc: required command not found: %s\n' "$dependency" >&2
+    exit 1
+  fi
+done
+
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  printf 'dilc: current directory is not inside a Git worktree\n' >&2
+  exit 1
+fi
+
+if ! last_commit=$(git rev-parse --verify HEAD 2>/dev/null); then
+  printf 'dilc: repository has no commits to compare\n' >&2
+  exit 1
+fi
+
+exec diffdash diff "$last_commit"

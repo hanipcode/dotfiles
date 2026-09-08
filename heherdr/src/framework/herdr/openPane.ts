@@ -20,16 +20,26 @@ const placement = Args.text({ name: "placement" }).pipe(
   Args.optional,
 )
 
-export const openCommand = Command.make("open", { entrypoint, placement }).pipe(
+const width = Args.text({ name: "width" }).pipe(
+  Args.withDescription("Pane width in cells or as a percentage"),
+  Args.optional,
+)
+
+const height = Args.text({ name: "height" }).pipe(
+  Args.withDescription("Pane height in cells or as a percentage"),
+  Args.optional,
+)
+
+export const openCommand = Command.make("open", { entrypoint, placement, width, height }).pipe(
   Command.withDescription("Open one of this plugin's panes inside herdr"),
-  Command.withHandler(({ entrypoint, placement }) =>
+  Command.withHandler(({ entrypoint, placement, width, height }) =>
     Effect.gen(function* () {
       const client = yield* HerdrClient
 
       const pluginId = process.env["HERDR_PLUGIN_ID"] ?? "heherdr"
       const where = placement._tag === "Some" ? placement.value : "overlay"
 
-      yield* client.run([
+      const args = [
         "plugin",
         "pane",
         "open",
@@ -40,7 +50,11 @@ export const openCommand = Command.make("open", { entrypoint, placement }).pipe(
         "--placement",
         where,
         "--focus",
-      ])
+      ]
+      if (width._tag === "Some") args.push("--width", width.value)
+      if (height._tag === "Some") args.push("--height", height.value)
+
+      yield* client.run(args)
     }).pipe(
       Effect.catchTags({
         HerdrError: (error) => Console.error(`heherdr open: ${error.code}: ${error.message}`),
