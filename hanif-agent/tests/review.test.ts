@@ -442,6 +442,12 @@ describe("adversarial review", () => {
           const modulesPrompt = [...prompts].find(([role]) => role.endsWith("-standards-modules"))?.[1]
           const securityPrompt = [...prompts].find(([role]) => role.endsWith("-security"))?.[1]
           expect(modulesPrompt).toContain("repository-guidance.json")
+          // Verify the policy delivered to the reviewer, not the exported policy constant.
+          expect(modulesPrompt).toContain("test-oracle/circular-expectation")
+          expect(modulesPrompt).toContain("test-oracle/implementation-mirroring")
+          for (const role of ["luna-security", "luna-quality", "luna-standards-contracts", "astra-independent", "astra-reconcile"]) {
+            expect(prompts.get(role)).not.toContain("## test-oracle")
+          }
            expect(modulesPrompt).toContain("custom Result")
            for (const role of ["luna-standards-contracts", "luna-standards-modules"]) {
              const prompt = prompts.get(role)

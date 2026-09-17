@@ -5,6 +5,7 @@ import { dirname, join } from "node:path"
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises"
 import { GoalReferenceError, GitReviewError } from "../errors.ts"
 import { effectSlopcopReview } from "./effect-slopcop.ts"
+import { testOracleReview } from "./test-oracle.ts"
 import {
   GoalReference,
   type CanonicalFinding,
@@ -16,7 +17,7 @@ import {
   type ReviewUnit,
 } from "./domain.ts"
 
-export const PROMPT_VERSION = "13"
+export const PROMPT_VERSION = "14"
 
 const lunaContract = `{
   "summary": "short coverage summary",
@@ -224,7 +225,9 @@ export function lunaReviewTasks(input: {
 
 ${effectSlopcopReview}`
     const repositoryGuidance = specialist.role === "standards-modules"
-      ? `Accepted target-branch guidance is listed in ${input.snapshot.repositoryGuidanceManifestPath}.`
+      ? `Accepted target-branch guidance is listed in ${input.snapshot.repositoryGuidanceManifestPath}.
+
+${testOracleReview}`
       : ""
     const task: ReviewerTask = {
       role: `luna-${specialist.role}`,

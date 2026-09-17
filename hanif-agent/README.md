@@ -37,6 +37,21 @@ Reviewers establish applicability per package and verify the pinned Effect APIs.
 Findings cite `effect-slopcop/<number>` and remain Luna-final; reviewers recommend
 fixes without modifying the repository.
 
+Luna's existing **standards-modules** reviewer also checks changed or materially
+affected tests using `src/review/test-oracle.ts`, across languages and frameworks:
+
+- `test-oracle/circular-expectation`: tautological assertions or expected answers
+  derived from the same implementation they claim to verify.
+- `test-oracle/implementation-mirroring`: assertions that pin incidental internals
+  and break under a behavior-preserving refactor.
+
+Findings require a source trace, a concrete missed regression or unnecessary
+refactor failure, and an actionable replacement. Public contracts, meaningful
+properties, schema projections, and security-related absence checks are not
+automatically violations. Findings remain Luna-final; tests are never deleted
+automatically. This does not add a reviewer session or expand the review into a
+whole-repository test audit.
+
 Reviewer threads run with `codex exec --ephemeral`, so they are never attached to
 the reviewed project or retained in Codex session history. User and project rules
 and Codex configuration are ignored for these isolated reviewer invocations.

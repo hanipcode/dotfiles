@@ -28,7 +28,8 @@ export default {
               id: "merman.toggle",
               title: "Toggle Merman diagrams",
               group: "System",
-              bind: "ctrl+m",
+              bind: "<leader>d",
+              palette: true,
               run() {
                 try {
                   const enabled = toggleMerman(configPath)
