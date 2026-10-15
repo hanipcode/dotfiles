@@ -42,7 +42,7 @@ tester.run("byfungsi/require-blank-line-between-multiline-const-declarations", r
     },
     {
       code: "const first = 1; const second = {\n  value: 2\n};",
-      output: "const first = 1;\nconst second = {\n  value: 2\n};",
+      output: "const first = 1;\n\nconst second = {\n  value: 2\n};",
       errors: [error]
     }
   ]

@@ -176,6 +176,37 @@ ln -s ../../.agents/skills/my-skill home/.claude/skills/my-skill
 Normally this manual step is unnecessary because `dot stow` creates and prunes
 those Claude links automatically.
 
+## Authenticated browser control
+
+The model-invoked `browser-control` skill drives tabs in the existing Chrome
+profile through the Browser Control extension. This preserves normal sessions
+and installed extensions such as 1Password without exposing the profile through
+a remote-debugging port. Password-manager unlock, Touch ID, CAPTCHA, and other
+human-only prompts remain explicit handoffs.
+
+After `./dot brew`, complete the browser-side setup once in the one Chrome
+profile agents should use:
+
+```sh
+printf '%s\n' "$(npm root --global)/@opencode-ai/browser-control/extension/dist"
+```
+
+Open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**,
+select that directory, and pin Browser Control. Keep the extension disabled in
+other simultaneously running profiles because one relay controls one browser
+profile at a time. Reload the unpacked extension after package upgrades.
+
+Verify the local installation with:
+
+```sh
+browser-control doctor
+browser-control status
+```
+
+The Chrome DevTools MCP remains configured but disabled globally so agents use
+Browser Control for browser work. Re-enable it only for isolated DevTools tasks
+that need its performance or memory tooling.
+
 `img2threejs` is pinned as a Git submodule because it is maintained as its own
 repository. `dot stow` initializes submodules before creating the home-directory
 links, so the normal setup command works on a fresh clone.

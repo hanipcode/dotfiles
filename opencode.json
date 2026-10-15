@@ -1,0 +1,10 @@
+{
+  "mcp": {
+    "servers": {
+      "pluang": {
+        "type": "remote",
+        "url": "https://mcp.pluang.com/mcp"
+      }
+    }
+  }
+}

@@ -22,8 +22,10 @@ in [`byfungsi/UPSTREAM.md`](byfungsi/UPSTREAM.md):
 - `no-widen-then-assert`
 - `require-safety-comment-for-type-assertion`
 
-It also contains one autofixable layout rule developed in Fungsi:
+It also contains autofixable layout rules developed in Fungsi:
 
+- `require-blank-line-before-return`: inserts visual separation before a block-level
+  `return` that follows another statement.
 - `require-blank-line-between-multiline-const-declarations`: inserts visual separation
   between adjacent `const` declarations when either declaration spans multiple lines.
 
@@ -95,6 +97,7 @@ configuration:
     "byfungsi/no-unknown-output": "error",
     "byfungsi/no-unsafe-dictionary-type": "error",
     "byfungsi/no-widen-then-assert": "error",
+    "byfungsi/require-blank-line-before-return": "error",
     "byfungsi/require-blank-line-between-multiline-const-declarations": "error",
     "byfungsi/require-safety-comment-for-type-assertion": "error"
   }

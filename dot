@@ -366,7 +366,7 @@ cmd_doctor() {
   local fail=0
 
   head_ "Tools"
-  for t in stow brew git nvim herdr bun fzf opencode runbox hanif-agent hshot; do
+  for t in stow brew git nvim herdr bun fzf opencode browser-control runbox hanif-agent hshot; do
     if command -v "$t" >/dev/null 2>&1; then ok "$t"; else bad "$t missing"; fail=1; fi
   done
 

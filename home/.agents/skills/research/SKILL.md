@@ -10,8 +10,9 @@ Spin up **exactly one background agent** to do the research, so you keep working
 Before spawning, check `RESEARCH_SUBAGENT`:
 
 - If `RESEARCH_SUBAGENT=1`, this is already the delegated researcher. Perform the research and write the report directly without spawning another agent or pane.
-- If `HERDR_ENV=1`, create one background pane with `herdr pane split ... --env RESEARCH_SUBAGENT=1` and explicitly tell that agent not to delegate or spawn subagents.
-- Otherwise, use the platform's single background-agent mechanism and put the same no-delegation instruction in its prompt.
+- Otherwise, use the platform's single background-agent mechanism and set `RESEARCH_SUBAGENT=1` in its environment or prompt. Explicitly tell that agent not to delegate or spawn subagents.
+
+Use the platform background agent even when `HERDR_ENV=1`; research does not run in Herdr panes.
 
 Never create a second research agent as a retry. If the delegated agent stalls or fails, stop or close it and complete the research in the original session.
 

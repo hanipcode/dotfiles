@@ -37,6 +37,12 @@
       "skillPath": "skills/ask-sonner/SKILL.md",
       "computedHash": "23f724e97247b2003ccc479f3a9b3af8e4191a0e133b94ee6b73f8405349687f"
     },
+    "browser-control": {
+      "source": "anomalyco/browser-control",
+      "sourceType": "github",
+      "skillPath": "skills/browser-control/SKILL.md",
+      "computedHash": "e100fa0716cf3d5772e263262a2a71584e0df5dd4209b5ced6ae582ec516e33f"
+    },
     "code-review": {
       "source": "mattpocock/skills",
       "sourceType": "github",

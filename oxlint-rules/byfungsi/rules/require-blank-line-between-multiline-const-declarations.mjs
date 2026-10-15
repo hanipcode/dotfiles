@@ -53,9 +53,10 @@ function blankLineFix(fixer, sourceCode, previousStatement, currentStatement) {
   const currentLineStart = sourceCode.text.lastIndexOf("\n", currentStatement.start - 1) + 1;
   const currentLinePrefix = sourceCode.text.slice(currentLineStart, currentStatement.start);
   const indentation = /^[\t ]*/u.exec(currentLinePrefix)?.[0] ?? "";
+  const insertedLineBreak = sourceCode.text.includes("\r\n") ? "\r\n" : "\n";
   return fixer.replaceTextRange(
     [previousStatement.end, currentStatement.start],
-    `\n${indentation}`
+    `${insertedLineBreak}${insertedLineBreak}${indentation}`
   );
 }
 

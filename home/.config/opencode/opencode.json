@@ -28,6 +28,12 @@
     }
   },
   "mcp": {
+    "servers": {
+      "beui-pro": {
+        "type": "remote",
+        "url": "https://mcp.beui.dev/pro/mcp"
+      }
+    },
     "linear": {
       "type": "remote",
       "url": "https://mcp.linear.app/mcp",
@@ -42,7 +48,7 @@
     "chrome-devtools": {
       "type": "local",
       "command": ["npx", "-y", "chrome-devtools-mcp@latest"],
-      "enabled": true
+      "enabled": false
     }
   }
 }

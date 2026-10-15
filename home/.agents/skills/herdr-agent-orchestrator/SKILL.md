@@ -1,6 +1,6 @@
 ---
 name: herdr-agent-orchestrator
-description: "Orchestrate work across herdr worktree agents — spawn a worker per branch or stack layer, brief it, arbitrate the runbox lease, fan in results, and route the user to a worker. Use when the user asks you to orchestrate or delegate work across herdr worktrees, to act as orchestrator over worktree agents, or to decide which worktree runbox runs. Requires HERDR_ENV=1."
+description: "Orchestrate work across herdr worktree agents — spawn a worker per branch or stack layer, brief it, fan in results, coordinate verification, and route the user to a worker. Use when the user asks you to orchestrate or delegate work across herdr worktrees or to act as orchestrator over worktree agents. Requires HERDR_ENV=1."
 ---
 
 # Herdr agent orchestrator
@@ -15,15 +15,19 @@ test "${HERDR_ENV:-}" = 1
 
 If that fails, say you are not running inside Herdr and stop.
 
-The `herdr` skill is the authority on CLI syntax and the `runbox` skill on the runner. Read them for flags and semantics; this skill covers only what orchestration adds.
+The `herdr` skill is the authority on CLI syntax. Read it for flags and semantics; this skill covers only what orchestration adds.
 
-Name yourself first, so a worker can prompt you back:
+Name yourself for Herdr navigation (choose a unique name if `orchestrator` is taken):
 
 ```bash
 herdr agent rename "$HERDR_PANE_ID" orchestrator
 ```
 
-Keep `$HERDR_PANE_ID` — every **brief** carries it. An agent name is cleared when that agent exits or is replaced; a pane id survives.
+**Session-addressed coordination:** read [OpenCode session routing](SESSION-ROUTING.md)
+before spawning or messaging a worker. Record your current OpenCode session ID from the
+session environment/context, and each worker's session ID before sending its brief.
+Herdr names and pane IDs locate terminals, not conversations; their active session can change.
+Every brief carries the orchestrator and worker session IDs. Pane IDs are navigation only.
 
 ## You do not code
 
@@ -34,9 +38,10 @@ Read anything, plan, verify, review. Never edit a file inside a worker's worktre
 ```bash
 herdr worktree create --workspace <repo-parent-workspace> --branch <branch> --base <ref> --no-focus
 # read .result.workspace, .result.tab, .result.root_pane, and the worktree path
-herdr agent start <worker-name> --kind <your-own-kind> --pane <root_pane_id> [-- <bypass-flag>]
-herdr agent prompt <worker-name> "<brief>"
-herdr agent get <worker-name>          # status must be working — the brief landed
+# Create and verify an OpenCode session at that worktree using SESSION-ROUTING.md.
+herdr agent start <worker-name> --kind opencode --pane <root_pane_id> -- --session <worker-session-id>
+# Send the brief through the OpenCode API to <worker-session-id>, not the pane.
+# Require a session-addressed acknowledgement carrying both session IDs.
 ```
 
 `worktree create` runs only from the repo's parent workspace. Called from inside a linked worktree it fails with `linked_worktree_source`, so pass the parent's `--workspace` — read it from `herdr worktree list` as `source_workspace_id`.
@@ -46,26 +51,29 @@ herdr agent get <worker-name>          # status must be working — the brief la
 **Bypass the worker's permission prompts.** A worker that stops to approve its own tool calls is a stalled worker: nobody is watching its pane, and it reports `blocked` for a reason that has nothing to do with the work. How depends on the kind:
 
 - `claude` — pass `-- --dangerously-skip-permissions`.
-- `opencode` — no flag exists; permissions come from `opencode.json`. It can still block on paths that config marks `ask`, so read the pane instead of assuming the work itself stalled.
+- `opencode` — inspect the installed CLI's help for `--auto` and its semantics; when supported, append it to the launch arguments. It does not override explicit denials or the task's approval gates.
 
 If you inherit a worker that blocks on an approval prompt, restart it with the bypass and re-send the brief; the fresh session remembers nothing.
 
 Name for the layer, not the person — `l1-contract`, `mpcs`, `gpcs`. Names must match `[a-z][a-z0-9_-]{0,31}` and be unique among live agents.
 
-Never pass `--wait` on a spawn prompt. It holds your turn for the length of the worker's task, and the user cannot reach you while it holds. Confirm delivery with `agent get` instead.
+Submit the brief without waiting for the whole implementation. API acceptance proves enqueueing,
+not that the worker read it; require its acknowledgement in your exact OpenCode session.
+Use session-addressed nudges for unexpected stops, never input to whichever session a pane displays.
 
 Parallel workers need a **frozen interface** before any of them starts — the exact names, types, and signatures each layer exposes or consumes. Freeze it in the plan, restate it in every brief. Without it, siblings block on each other or invent conflicting versions of the same seam.
 
 ## The brief
 
-A worker boots with zero context, so the brief is the entire handoff. Send it as the prompt text, and keep the text in your own scratchpad directory so a restarted worker can be re-briefed verbatim. Never write it as a file in the worker's worktree: `runbox sync` copies non-ignored untracked files into the managed runner, so a stray brief leaks into whatever is running.
+A worker boots with zero context, so the brief is the entire handoff. Send it as the prompt text, and keep the text in your own scratchpad directory so a restarted worker can be re-briefed verbatim. Never write it as a file in the worker's worktree; planning artifacts do not belong on the worker's branch.
 
 ```
 Load the `herdr-managed-agent` skill now, before anything else.
 
 You are worker `<worker-name>`, working in <worktree-path> on branch <branch>
-(based on <ref>). Your orchestrator is `<orchestrator-name>` at pane
-<orchestrator-pane-id>.
+(based on <ref>). Your OpenCode session is <worker-session-id>.
+Your orchestrator's OpenCode session is <orchestrator-session-id>.
+Herdr name <orchestrator-name> and pane <orchestrator-pane-id> are navigation only.
 
 Task: <what to build, in enough detail that no clarifying question is needed
 to start>
@@ -78,8 +86,20 @@ Ask instead.>
 
 Done means: <the commands that must pass, e.g. the exact test invocations>
 
-Report by prompting me:
-  herdr agent prompt <orchestrator-name> "<worker-name>: DONE|BLOCKED|QUESTION|SCOPE-CHANGE — one line"
+Work independently on this non-main branch: implement, fix issues, run checks,
+and make local commits without waiting for human or orchestrator approval.
+Do not add review gates or milestone approval pauses. Coordinate changes to
+sibling-owned files or frozen interfaces with the orchestrator.
+
+Test deployment target: <exact user-confirmed test environment and deployment
+target, or none>. When the user has confirmed this target is a test environment,
+deploy there, verify the deployed behavior, fix failures, and redeploy until the
+task's checks pass without asking for approval at each step.
+
+Read SESSION-ROUTING.md via the managed-agent skill. Before implementation, send ACK
+to <orchestrator-session-id> with both session IDs and your worktree/branch.
+Send all progress, DONE, BLOCKED, QUESTION, and SCOPE-CHANGE reports to that same
+OpenCode session through the API. Never fall back to a Herdr name or pane occupant.
 
 The orchestrator owns phone notifications; report to it rather than sending duplicate alerts.
 ```
@@ -88,44 +108,44 @@ Every part filled, and the frozen interface concrete enough that a sibling could
 
 ## Fan-in
 
-Workers push their state to you; you do not poll. A report arrives as input in your pane.
+Workers push their state to your exact OpenCode session; you do not routinely poll.
+Reports reach the session even when its pane displays another conversation.
 
-### Pre-commit review gate
+### Independent branch work
 
-Every worker brief requires both reviews once after implementation and focused verification,
-before committing. Follow [the one-pass review and human-disposition policy](../code-review/REVIEW-HANDOFF.md):
+Workers on non-main branches implement, fix issues, run focused checks, and make
+local commits independently. Do not require human or orchestrator approval for
+those actions, add review gates, or pause them at intermediate milestones.
+Report progress and results without turning reports into permission requests.
 
-1. **`hanif-agent-review` skill** — load it for the CLI review of the effective worktree,
-   with the agreed base pinned explicitly. It owns command syntax and coverage interpretation.
-2. **`code-review` skill** — the independent Standards and Spec axes. Load the skill,
-   supply the same base and originating spec, and retain separate reports for both axes.
+Coordinate shared boundaries and frozen interfaces to avoid conflicting writes.
+Changes to main, merges into main, production actions, and operations outside the
+authorized task are not covered by this branch-local autonomy.
 
-These reviews are complementary; neither substitutes for the other or for orchestrator
-verification. Reviewers remain read-only. The worker may spawn the review-only agents
-required by `code-review`; this does not authorize further implementation delegation.
+### Confirmed test-environment deployments
 
-Freeze edits while the reviews run. Both must inspect the same effective changes, including
-staged, unstaged, and untracked files. The `code-review` skill's default three-dot HEAD diff
-excludes uncommitted work: explicitly adapt its scope for this pre-commit gate using the
-merge-base-to-worktree diff plus the untracked-file inventory and contents. An empty HEAD
-diff is not a clean review. Record the base, reviewed file inventory, and any scope mismatch;
-resolve mismatches before accepting the reports. Keep review artifacts outside the worktree.
+When the user designates a deployment target and confirms it is a test environment,
+record the exact environment and target in the worker brief. That confirmation
+authorizes the worker to deploy its assigned work there, verify deployed behavior,
+fix failures, and redeploy as needed without further human or orchestrator approval.
+Do not introduce deployment, verification, or fix approval pauses within this loop.
 
-The worker reports both outputs and proposed dispositions without starting fixes. You
-analyze the evidence and present all findings to the human, including disputed and deferred
-items. Human approval, not orchestrator arbitration alone, authorizes review-driven fixes.
-Route approved fixes to their owner, then independently verify the resulting diff and
-affected checks. No automatic post-fix review is required. Disclose incomplete coverage
-and ask the human whether to retry or proceed; zero findings is not the completion criterion.
-Report verified fixes and remaining risks before seeking any separate commit approval.
+Before each deployment, verify that the configured account, project, environment,
+and resources match the recorded test target. A test label does not authorize using
+production resources. If the target is ambiguous, conflicts with configuration,
+or would affect production or resources outside the authorized test environment,
+stop that action and ask for clarification while continuing independent local work.
+Report deployments, verification evidence, fixes, and genuine blockers through the
+recorded session route. Credentials and unrelated destructive operations remain
+outside this authorization.
 
-Verify rather than trust a `DONE`. Read the pane, then run your own read-only checks — the diff in that worktree, the tests the brief named:
+Verify rather than trust a `DONE`: inspect the recorded worker session's messages and
+evidence, then independently check its worktree diff and the tests named in the brief.
 
-```bash
-herdr agent read <worker-name> --source recent-unwrapped --lines 200
-```
-
-Poll only when a worker has gone quiet: `herdr agent get <worker-name>`. Treat `unknown` as no information — it does not prove the work finished. On `blocked`, read the pane before deciding what to send, and surface it to the user:
+Inspect session state only when a worker has gone quiet or a requested supervisor catches
+a stop. Herdr status and pane reads are supplemental UI diagnostics, not proof about the
+recorded OpenCode session. Check that session before nudging it through the API. On
+`blocked`, inspect its evidence before deciding what to send, and surface human blockers:
 
 ```bash
 herdr notification show "<worker-name> is blocked" --body "<what it needs>" --sound request
@@ -136,7 +156,7 @@ herdr notification show "<worker-name> is blocked" --body "<what it needs>" --so
 Send a phone notification as well as the in-session message when:
 
 - **Human intervention is needed:** a decision, approval, credential, permission, or manual action is required. Inspect worker reports first; resolve issues within your authority yourself and notify only when the human must act.
-- **Findings are ready for human disposition:** requested review attempts have finished, coverage is disclosed, and your evidence analysis is ready. Notify before waiting for fix/disposition approval, not merely on a worker's `DONE` report. After approved fixes, report verified results without requiring another review round.
+- **Work is ready for the human:** implementation and verification are complete, with results and remaining risks available. This notification does not gate branch-local fixes or commits.
 
 Send once per distinct handoff. Notify again only when the required action or review scope materially changes, or the user requests another alert. Workers report to you; you consolidate alerts across workers.
 
@@ -158,33 +178,24 @@ A successful publish confirms server acceptance, not phone delivery. Immediate d
 
 ## Route the user to a worker
 
-The user talks to you, but may need a worker directly. After each spawn, hand over the coordinates unprompted — worker name, branch, workspace id, worktree path — and how to get there:
+The user talks to you, but may need a worker directly. After each spawn, hand over the coordinates unprompted — worker session ID, worker name, branch, workspace id, worktree path — and how to get there:
 
 ```bash
 herdr workspace focus <workspace-id>   # go look
 herdr agent attach <worker-name>       # take the pane
 ```
 
-Once the user has talked to a worker directly, your model of that layer is stale. `herdr agent read` that worker before your next decision about it.
-
-## The runbox lease
-
-One managed runner and one watcher exist per repository, so worktrees compete for them. You hold the **lease** and grant it; workers never run `runbox dev`, `sync`, `switch`, or `stack` themselves.
-
-Grant it by running the command from the target worktree — `sync` copies the *invoking* worktree's dirty state, so the cwd is the entire decision:
-
-```bash
-cd <target-worktree> && runbox dev -w --no-tui --json
-```
-
-Then tell the previous holder it lost the runner, or it will read a stale dev server as its own.
-
-For a stack, test from the top branch. `runbox stack --no-tui --json dev` refuses while any layer is dirty or needs rebasing; that refusal is a work item for the layer's owner, not something to route around with `runbox switch` or a local script.
+Once the user has talked to a worker directly, your model of that layer is stale. Read
+the recorded worker session's messages before your next decision about it. If the user
+replaced the session, explicitly confirm the new session ID and re-brief it first.
 
 ## Push, PR, and teardown
 
-Workers commit on their own branch only after the pre-commit review gate and required approval.
+Workers commit on their own non-main branch after focused verification without
+human or orchestrator approval. Do not introduce a pre-commit review gate.
 You own push, `prepare-pr`, and every `gh stack` operation — otherwise parallel workers race on one stack.
+Workers own deployments and verification/fix loops for their exact user-confirmed
+test targets; they do not need to hand those actions back to you for approval.
 
 Remove a worktree only after its branch is merged or explicitly abandoned, and only one you created:
 

@@ -7,6 +7,7 @@ import { noModuleMockingRule } from "./rules/no-module-mocking.mjs"
 import { noObjectParametersRule } from "./rules/no-object-parameters.mjs"
 import { noRuntimeTypeofRule } from "./rules/no-runtime-typeof.mjs"
 import { noUnsafeDictionaryTypeRule } from "./rules/no-unsafe-dictionary-type.mjs"
+import { requireBlankLineBeforeReturnRule } from "./rules/require-blank-line-before-return.mjs"
 import { requireBlankLineBetweenMultilineConstDeclarationsRule } from "./rules/require-blank-line-between-multiline-const-declarations.mjs"
 import { requireSafetyCommentForTypeAssertionRule } from "./rules/require-safety-comment-for-type-assertion.mjs"
 
@@ -25,6 +26,7 @@ export default {
     "no-unknown-output": noUnknownOutput,
     "no-unsafe-dictionary-type": noUnsafeDictionaryTypeRule,
     "no-widen-then-assert": noWidenThenAssert,
+    "require-blank-line-before-return": requireBlankLineBeforeReturnRule,
     "require-blank-line-between-multiline-const-declarations":
       requireBlankLineBetweenMultilineConstDeclarationsRule,
     "require-safety-comment-for-type-assertion": requireSafetyCommentForTypeAssertionRule,

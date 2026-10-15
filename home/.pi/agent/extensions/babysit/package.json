@@ -1,0 +1,22 @@
+{
+  "name": "pi-babysit-extension",
+  "private": true,
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "^1.2.0",
+    "@earendil-works/pi-coding-agent": "^1.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.2"
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test babysit.test.ts",
+    "typecheck": "tsc --noEmit"
+  }
+}

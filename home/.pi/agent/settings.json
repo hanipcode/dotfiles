@@ -1,10 +1,14 @@
 {
-  "lastChangelogVersion": "0.83.0",
+  "lastChangelogVersion": "1.2.0",
   "theme": "catppuccin-macchiato",
-  "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.5",
+  "defaultProvider": "openai",
+  "defaultModel": "gpt-6.1-sol",
   "defaultThinkingLevel": "medium",
   "packages": [
-    "npm:@plannotator/pi-extension"
-  ]
+    "npm:@plannotator/pi-extension",
+    "npm:pi-claude-bridge"
+  ],
+  "deviceId": "3d9f31f3-b302-4728-a1fb-dac747bafe55",
+  "defaultProjectTrust": "always",
+  "tuiMode": "fullscreen"
 }
